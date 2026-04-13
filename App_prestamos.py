@@ -40,6 +40,7 @@ def cargar_prestamos():
         if not df.empty:
             df["Cedula"] = df["Cedula"].astype(str).str.replace(".0", "", regex=False)
             df["ID"] = df["ID"].astype(str).str.replace(".0", "", regex=False)
+            df["Nombre"] = df["Nombre"].astype(str)
         return df
     except: return pd.DataFrame(columns=["ID", "Fecha", "Nombre", "Cedula", "Monto_Inicial", "Saldo_Restante", "Cuota_Mensual", "Meses_Totales", "Pagos_Realizados", "Estado", "Tasa"])
 
@@ -71,23 +72,29 @@ def generar_excel_estado_cuenta(datos_c, historial_c):
         workbook = writer.book; ws = workbook[ws_name]
         f_azul = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
         f_verde = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+        
+        # Encabezado
         ws["A1"] = "ESTADO DE CUENTA"; ws["A1"].font = Font(bold=True, size=14)
-        ws["A3"] = "CLIENTE:"; ws["B3"] = datos_c['Nombre'].upper()
-        ws["A4"] = "CÉDULA:"; ws["B4"] = datos_c['Cedula']
+        ws["A3"] = "CLIENTE:"; ws["B3"] = str(datos_c['Nombre']).upper()
+        ws["A4"] = "CÉDULA:"; ws["B4"] = str(datos_c['Cedula'])
         ws["D3"] = "SALDO:"; ws["E3"] = f"${datos_c['Saldo_Restante']}"
-        h = ["Cuota #", "Descripción", "Monto", "Estado"]
-        for c_idx, text in enumerate(h, 1):
+        
+        headers = ["Cuota #", "Descripción", "Monto", "Estado"]
+        for c_idx, text in enumerate(headers, 1):
             cell = ws.cell(row=7, column=c_idx, value=text)
             cell.fill = f_azul; cell.font = Font(color="FFFFFF", bold=True)
+            
         pag = int(datos_c['Pagos_Realizados'])
         for i in range(1, int(datos_c['Meses_Totales']) + 1):
-            r = 7 + i
-            ws.cell(row=r, column=1, value=i); ws.cell(row=row, column=2, value=f"Cuota mes {i}")
-            ws.cell(row=r, column=3, value=datos_c['Cuota_Mensual'])
+            r_idx = 7 + i
+            ws.cell(row=r_idx, column=1, value=i)
+            ws.cell(row=r_idx, column=2, value=f"Cuota mes {i}")
+            ws.cell(row=r_idx, column=3, value=datos_c['Cuota_Mensual'])
             est = "PAGADO" if i <= pag else "PENDIENTE"
-            ws.cell(row=r, column=4, value=est)
+            ws.cell(row=r_idx, column=4, value=est)
             if i <= pag:
-                for c in range(1, 5): ws.cell(row=r, column=c).fill = f_verde
+                for c in range(1, 5): ws.cell(row=r_idx, column=c).fill = f_verde
+        
         for col in ws.columns: ws.column_dimensions[col[0].column_letter].width = 22
     return output.getvalue()
 
@@ -97,70 +104,62 @@ df_p = cargar_prestamos(); df_h = cargar_historial_pagos()
 
 t_gestion, t_nuevo = st.tabs(["📋 GESTIÓN DE CLIENTES", "➕ NUEVO PRÉSTAMO"])
 
-# TAB 1: GESTIÓN (LISTA + BUSCADOR + PAGOS + EXCEL)
 with t_gestion:
-    # --- BUSCADOR GIGANTE ---
-    busqueda = st.text_input("🔍 BUSCAR CLIENTE POR NOMBRE O CÉDULA:", placeholder="Escribe aquí para buscar...")
+    busqueda = st.text_input("🔍 BUSCAR CLIENTE POR NOMBRE O CÉDULA:", placeholder="Escribe aquí...")
     
     activos = df_p[df_p["Estado"] == "ACTIVO"]
-    
-    # Filtrar si hay búsqueda
     if busqueda:
         activos = activos[activos['Nombre'].str.contains(busqueda, case=False) | activos['Cedula'].str.contains(busqueda)]
 
     if activos.empty:
         st.warning("No se encontraron clientes activos.")
     else:
-        for index, row in activos.iterrows():
+        for index, row_data in activos.iterrows():
             # CARD VISUAL DENTRO DE UN EXPANDER
-            with st.expander(f"👤 {row['Nombre'].upper()}  |  💰 Saldo: ${row['Saldo_Restante']}"):
+            with st.expander(f"👤 {row_data['Nombre'].upper()}  |  💰 Saldo: ${row_data['Saldo_Restante']}"):
                 col_a, col_b = st.columns([1, 1])
                 
                 with col_a:
                     st.write("### ℹ️ Información")
-                    st.write(f"**Cédula:** {row['Cedula']}")
-                    st.write(f"**Fecha Inicio:** {row['Fecha']}")
-                    st.metric("Cuota Mensual", f"${row['Cuota_Mensual']}")
-                    st.metric("Progreso de Pagos", f"{row['Pagos_Realizados']}/{row['Meses_Totales']}")
+                    st.write(f"**Cédula:** {row_data['Cedula']}")
+                    st.metric("Cuota Mensual", f"${row_data['Cuota_Mensual']}")
+                    st.metric("Progreso", f"{row_data['Pagos_Realizados']}/{row_data['Meses_Totales']}")
                     
-                    # BOTÓN EXCEL
-                    h_cliente = df_h[df_h["ID_Prestamo"] == row['ID']]
+                    h_cliente = df_h[df_h["ID_Prestamo"] == row_data['ID']]
                     st.download_button(
-                        f"📥 EXCEL DE {row['Nombre'].split()[0]}", 
-                        data=generar_excel_estado_cuenta(row, h_cliente), 
-                        file_name=f"Estado_{row['Nombre'].replace(' ','_')}.xlsx", 
+                        f"📥 EXCEL DE {str(row_data['Nombre']).split()[0]}", 
+                        data=generar_excel_estado_cuenta(row_data, h_cliente), 
+                        file_name=f"Estado_{str(row_data['Nombre']).replace(' ','_')}.xlsx", 
+                        key=f"btn_ex_{row_data['ID']}",
                         use_container_width=True
                     )
 
                 with col_b:
                     st.write("### 💵 Registrar Pago")
-                    # Formulario de pago simplificado dentro del expander
-                    with st.form(key=f"pago_{row['ID']}"):
-                        n_c = st.number_input("Cuotas a pagar:", min_value=1, value=1, key=f"nc_{row['ID']}")
-                        st.success(f"Cobrar: ${round(row['Cuota_Mensual'] * n_c, 2)}")
-                        foto = st.file_uploader("📸 Recibo:", type=["jpg","png","jpeg"], key=f"foto_{row['ID']}")
+                    with st.form(key=f"f_pago_{row_data['ID']}"):
+                        n_c = st.number_input("Cuotas:", min_value=1, value=1, key=f"nc_{row_data['ID']}")
+                        st.success(f"Cobrar: ${round(row_data['Cuota_Mensual'] * n_c, 2)}")
+                        foto = st.file_uploader("📸 Recibo:", type=["jpg","png","jpeg"], key=f"foto_{row_data['ID']}")
                         
                         if st.form_submit_button("✅ CONFIRMAR PAGO", use_container_width=True, type="primary"):
                             with st.spinner('Procesando...'):
                                 link = subir_a_imgbb_comprimido(foto.getvalue()) if foto else ""
-                                np = pd.DataFrame([{"ID_Prestamo": row['ID'], "Fecha_Pago": datetime.now().strftime("%Y-%m-%d %H:%M"), "Cuotas_Pagadas": n_c, "Monto_Pagado": round(row['Cuota_Mensual'] * n_c, 2), "URL_Comprobante": link}])
+                                np = pd.DataFrame([{"ID_Prestamo": row_data['ID'], "Fecha_Pago": datetime.now().strftime("%Y-%m-%d %H:%M"), "Cuotas_Pagadas": n_c, "Monto_Pagado": round(row_data['Cuota_Mensual'] * n_c, 2), "URL_Comprobante": link}])
                                 conn.update(worksheet="Pagos", data=pd.concat([df_h, np], ignore_index=True))
                                 
-                                # Actualizar Saldo
                                 df_p.at[index, "Pagos_Realizados"] += n_c
-                                df_p.at[index, "Saldo_Restante"] = round(max(0, row["Saldo_Restante"] - (row["Monto_Inicial"]/row["Meses_Totales"])*n_c), 2)
-                                if df_p.at[index, "Pagos_Realizados"] >= row["Meses_Totales"]: df_p.at[index, "Estado"] = "PAGADO"
-                                conn.update(worksheet="Prestamos", data=df_p)
+                                abono_saldo = (row_data["Monto_Inicial"] / row_data["Meses_Totales"]) * n_c
+                                df_p.at[index, "Saldo_Restante"] = round(max(0, row_data["Saldo_Restante"] - abono_saldo), 2)
+                                if df_p.at[index, "Pagos_Realizados"] >= row_data["Meses_Totales"]: df_p.at[index, "Estado"] = "PAGADO"
                                 
+                                conn.update(worksheet="Prestamos", data=df_p)
                                 st.balloons(); time.sleep(1); st.rerun()
                 
-                # Botón de eliminar más discreto al final
-                if st.button(f"Eliminar a {row['Nombre'].split()[0]}", type="secondary", key=f"del_{row['ID']}"):
-                    conn.update(worksheet="Prestamos", data=df_p[df_p["ID"] != row['ID']])
-                    conn.update(worksheet="Pagos", data=df_h[df_h["ID_Prestamo"] != row['ID']])
+                if st.button(f"Eliminar a {str(row_data['Nombre']).split()[0]}", type="secondary", key=f"del_{row_data['ID']}"):
+                    conn.update(worksheet="Prestamos", data=df_p[df_p["ID"] != row_data['ID']])
+                    conn.update(worksheet="Pagos", data=df_h[df_h["ID_Prestamo"] != row_data['ID']])
                     st.rerun()
 
-# TAB 2: NUEVO
 with t_nuevo:
     with st.form("form_nuevo", clear_on_submit=True):
         st.write("### 📝 Datos del Préstamo")
