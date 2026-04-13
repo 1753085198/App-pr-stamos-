@@ -1,7 +1,6 @@
 streamlit
 pandas
 openpyxl
+streamlit-gsheets-connection
+requests
 Pillow
-st-gsheets-connection
-google-api-python-client
-google-auth
