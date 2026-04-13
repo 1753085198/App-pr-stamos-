@@ -19,7 +19,7 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 # 1. CONFIGURACIÓN
 st.set_page_config(page_title="SISTEMA FINANCIERO", page_icon="🏦", layout="wide")
 
-# 2. CSS PARA EL EXAMEN (LIMPIO Y GIGANTE)
+# 2. CSS ULTRA-GIGANTE
 st.markdown("""
     <style>
     button[data-baseweb="tab"] { font-size: 40px !important; font-weight: 900 !important; height: 100px !important; }
@@ -29,12 +29,12 @@ st.markdown("""
         font-size: 35px !important; font-weight: 900 !important; height: 7rem !important; 
         border-radius: 20px !important; background-color: #28a745 !important; color: white !important; 
     }
+    .stButton>button[kind="secondary"] { font-size: 22px !important; height: 4rem !important; }
     [data-testid="stMetricValue"] { font-size: 85px !important; font-weight: 900 !important; color: #007bff !important; }
     .streamlit-expanderHeader { font-size: 38px !important; font-weight: 800 !important; padding: 25px !important; }
     </style>
 """, unsafe_allow_html=True)
 
-# Conexión con reintento simple
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 if 'pago_key' not in st.session_state: st.session_state.pago_key = 0
@@ -48,8 +48,7 @@ def cargar_datos():
             df_p["Cedula"] = df_p["Cedula"].astype(str).str.replace(".0", "", regex=False)
             df_p["ID"] = df_p["ID"].astype(str).str.replace(".0", "", regex=False)
         return df_p, df_h
-    except Exception as e:
-        st.error("⚠️ Error de conexión con Google Sheets. Revisa el link en Secrets o espera 1 minuto.")
+    except:
         return None, None
 
 def subir_img(archivo):
@@ -114,10 +113,11 @@ if df_p is not None:
         if bq: act = act[act['Nombre'].str.contains(bq, case=False) | act['Cedula'].str.contains(bq)]
         
         for idx, row in act.iterrows():
-            is_open = st.session_state.id_abierto == row['ID']
-            with st.expander(f"👤 {row['Nombre'].upper()} | 💰 SALDO: ${row['Saldo_Restante']}", expanded=is_open):
+            abierto = st.session_state.id_abierto == row['ID']
+            with st.expander(f"👤 {row['Nombre'].upper()} | 💰 SALDO: ${row['Saldo_Restante']}", expanded=abierto):
                 c1, c2 = st.columns(2)
                 with c1:
+                    st.write("### ℹ️ RESUMEN")
                     st.metric("CUOTA", f"${row['Cuota_Mensual']}")
                     st.metric("PAGOS", f"{row['Pagos_Realizados']}/{row['Meses_Totales']}")
                     h_c = df_h[df_h["ID_Prestamo"] == row['ID']] if df_h is not None else pd.DataFrame()
@@ -132,16 +132,25 @@ if df_p is not None:
                                 st.error("❌ ERROR: Carga la foto para procesar.")
                             else:
                                 st.session_state.id_abierto = row['ID']
-                                url = subir_img(ft.getvalue())
-                                new_pg = pd.DataFrame([{"ID_Prestamo": row['ID'], "Fecha_Pago": datetime.now().strftime("%Y-%m-%d %H:%M"), "Cuotas_Pagadas": nc, "Monto_Pagado": round(row['Cuota_Mensual']*nc, 2), "URL_Comprobante": url}])
-                                conn.update(worksheet="Pagos", data=pd.concat([df_h, new_pg], ignore_index=True))
-                                r_u = row.copy(); r_u["Pagos_Realizados"] += nc
-                                r_u["Saldo_Restante"] = round(max(0, row["Saldo_Restante"] - (row["Monto_Inicial"]/row["Meses_Totales"])*nc), 2)
-                                if r_u["Pagos_Realizados"] >= row["Meses_Totales"]: r_u["Estado"] = "PAGADO"
-                                df_p.loc[idx] = r_u; conn.update(worksheet="Prestamos", data=df_p)
-                                if ml: enviar_mail(ml, row['Nombre'], generar_excel(r_u, pd.concat([df_h, new_pg])), url)
-                                st.session_state.pago_key += 1
-                                st.balloons(); time.sleep(0.5); st.rerun()
+                                with st.spinner('Procesando...'):
+                                    url = subir_img(ft.getvalue())
+                                    new_pg = pd.DataFrame([{"ID_Prestamo": row['ID'], "Fecha_Pago": datetime.now().strftime("%Y-%m-%d %H:%M"), "Cuotas_Pagadas": nc, "Monto_Pagado": round(row['Cuota_Mensual']*nc, 2), "URL_Comprobante": url}])
+                                    conn.update(worksheet="Pagos", data=pd.concat([df_h, new_pg], ignore_index=True))
+                                    r_u = row.copy(); r_u["Pagos_Realizados"] += nc
+                                    r_u["Saldo_Restante"] = round(max(0, row["Saldo_Restante"] - (row["Monto_Inicial"]/row["Meses_Totales"])*nc), 2)
+                                    if r_u["Pagos_Realizados"] >= row["Meses_Totales"]: r_u["Estado"] = "PAGADO"
+                                    df_p.loc[idx] = r_u; conn.update(worksheet="Prestamos", data=df_p)
+                                    if ml: enviar_mail(ml, row['Nombre'], generar_excel(r_u, pd.concat([df_h, new_pg])), url)
+                                    st.session_state.pago_key += 1
+                                    st.balloons(); time.sleep(0.5); st.rerun()
+                
+                # --- BOTÓN DE ELIMINAR (AQUÍ ESTÁ) ---
+                st.write("---")
+                if st.button(f"🗑️ ELIMINAR NOMBRE", key=f"del_{row['ID']}", use_container_width=True, type="secondary"):
+                    conn.update(worksheet="Prestamos", data=df_p[df_p["ID"] != row['ID']])
+                    conn.update(worksheet="Pagos", data=df_h[df_h["ID_Prestamo"] != row['ID']])
+                    st.session_state.id_abierto = None
+                    st.rerun()
 
     with t_n:
         with st.form("n", clear_on_submit=True):
