@@ -35,24 +35,15 @@ st.markdown("""
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- FUNCIONES DE CARGA ---
-def cargar_prestamos():
-    cols = ["ID", "Fecha", "Nombre", "Cedula", "Monto_Inicial", "Saldo_Restante", "Cuota_Mensual", "Meses_Totales", "Pagos_Realizados", "Estado", "Tasa"]
-    try:
-        df = conn.read(worksheet="Prestamos", ttl="0") 
-        if df is None or df.empty: return pd.DataFrame(columns=cols)
-        for c in cols: 
-            if c not in df.columns: df[c] = ""
-        return df
-    except: return pd.DataFrame(columns=cols)
-
-def cargar_historial_pagos():
-    cols = ["ID_Prestamo", "Fecha_Pago", "Cuotas_Pagadas", "Monto_Pagado", "URL_Comprobante"]
-    try:
-        df = conn.read(worksheet="Pagos", ttl="0")
-        if df is None or df.empty: return pd.DataFrame(columns=cols)
-        return df
-    except: return pd.DataFrame(columns=cols)
+# --- FUNCIONES DE CARGA Y PROCESO ---
+def cargar_datos():
+    df_p = conn.read(worksheet="Prestamos", ttl="0")
+    df_h = conn.read(worksheet="Pagos", ttl="0")
+    # Limpieza básica
+    if df_p is not None:
+        df_p["Cedula"] = df_p["Cedula"].astype(str).str.replace(".0", "", regex=False)
+        df_p["ID"] = df_p["ID"].astype(str).str.replace(".0", "", regex=False)
+    return df_p, df_h
 
 def subir_a_imgbb_comprimido(archivo_bytes):
     try:
@@ -67,115 +58,100 @@ def subir_a_imgbb_comprimido(archivo_bytes):
         return res.json()["data"]["url"] if res.status_code == 200 else ""
     except: return ""
 
-# --- GENERADOR DE EXCEL PREMIUM ---
 def generar_excel_de_gala(datos_c, historial_c):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        # HOJA 1: ESTADO DE CUENTA (AMORTIZACIÓN)
         ws1 = writer.book.create_sheet("ESTADO DE CUENTA", 0)
-        
-        # Estilos
         azul_oscuro = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
         verde_claro = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-        font_blanca = Font(color="FFFFFF", bold=True)
-        font_verde = Font(color="006100", bold=True)
+        font_blanca = Font(color="FFFFFF", bold=True); font_verde = Font(color="006100", bold=True)
         
-        # Encabezado de Identidad
-        ws1["A1"] = "REPORTE DETALLADO DE PRÉSTAMO"; ws1["A1"].font = Font(bold=True, size=16)
+        ws1["A1"] = "REPORTE DE PRÉSTAMO"; ws1["A1"].font = Font(bold=True, size=16)
         ws1["A3"] = "CLIENTE:"; ws1["B3"] = str(datos_c['Nombre']).upper()
-        ws1["A4"] = "CÉDULA:"; ws1["B4"] = str(datos_c['Cedula']).replace(".0", "")
-        ws1["D3"] = "VALOR TOTAL:"; ws1["E3"] = f"${datos_c['Monto_Inicial']}"
-        ws1["D4"] = "TASA:"; ws1["E4"] = f"{datos_c['Tasa']}% Anual"
-        ws1["D5"] = "SALDO ACTUAL:"; ws1["E5"] = f"${datos_c['Saldo_Restante']}"
+        ws1["D3"] = "SALDO:"; ws1["E3"] = f"${datos_c['Saldo_Restante']}"
         
-        # Tabla de Amortización
-        headers_plan = ["N° Cuota", "Descripción", "Valor Cuota", "Estado"]
-        for c_idx, val in enumerate(headers_plan, 1):
+        headers = ["N° Cuota", "Descripción", "Valor Cuota", "Estado"]
+        for c_idx, val in enumerate(headers, 1):
             cell = ws1.cell(row=7, column=c_idx, value=val)
             cell.fill = azul_oscuro; cell.font = font_blanca; cell.alignment = Alignment(horizontal="center")
             
         pagados = int(datos_c['Pagos_Realizados'])
         for i in range(1, int(datos_c['Meses_Totales']) + 1):
             r = 7 + i
-            ws1.cell(row=r, column=1, value=i)
-            ws1.cell(row=r, column=2, value=f"Cuota mes {i}")
+            ws1.cell(row=r, column=1, value=i); ws1.cell(row=r, column=2, value=f"Cuota mes {i}")
             ws1.cell(row=r, column=3, value=datos_c['Cuota_Mensual'])
             est = "PAGADO" if i <= pagados else "PENDIENTE"
             ws1.cell(row=r, column=4, value=est)
             if i <= pagados:
-                for col in range(1, 5):
-                    ws1.cell(row=r, column=col).fill = verde_claro; ws1.cell(row=r, column=col).font = font_verde
+                for col in range(1, 5): ws1.cell(row=r, column=col).fill = verde_claro; ws1.cell(row=r, column=col).font = font_verde
         
-        # HOJA 2: HISTORIAL DE PAGOS (BITÁCORA)
         ws2 = writer.book.create_sheet("HISTORIAL DE PAGOS", 1)
-        headers_pagos = ["Fecha Pago", "Cuotas Pagadas", "Monto Pagado", "Link Comprobante"]
-        for c_idx, val in enumerate(headers_pagos, 1):
-            cell = ws2.cell(row=1, column=c_idx, value=val)
-            cell.fill = azul_oscuro; cell.font = font_blanca
-            
         if not historial_c.empty:
-            for r_idx, row in enumerate(historial_c.values, 2):
-                ws2.cell(row=r_idx, column=1, value=row[1]) # Fecha
-                ws2.cell(row=r_idx, column=2, value=row[2]) # Cuotas
-                ws2.cell(row=r_idx, column=3, value=row[3]) # Monto
-                link_cell = ws2.cell(row=r_idx, column=4, value=row[4]) # URL
-                link_cell.font = Font(color="0000FF", underline="single")
-                
-        # Ajuste de Columnas
+            for r_idx, row in enumerate(dataframe_to_rows(historial_c, index=False, header=True), 1):
+                for c_idx, value in enumerate(row, 1): ws2.cell(row=r_idx, column=c_idx, value=value)
         for ws in [ws1, ws2]:
-            for col in ws.columns:
-                ws.column_dimensions[col[0].column_letter].width = 30
-                
+            for col in ws.columns: ws.column_dimensions[col[0].column_letter].width = 25
     return output.getvalue()
 
 # --- INTERFAZ ---
 st.title("🏦 PANEL DE CONTROL")
-df_p = cargar_prestamos(); df_h = cargar_historial_pagos()
+df_p, df_h = cargar_datos()
+
 t_gestion, t_nuevo = st.tabs(["📋 GESTIÓN", "➕ NUEVO"])
 
-if 'foto_key' not in st.session_state: st.session_state.foto_key = 0
+# Llave para resetear el uploader sin resetear la página
+if 'pago_exitoso_key' not in st.session_state:
+    st.session_state.pago_exitoso_key = 0
 
 with t_gestion:
     busq = st.text_input("🔍 BUSCADOR:", placeholder="NOMBRE O CÉDULA...")
-    activos = df_p[df_p["Estado"] == "ACTIVO"]
-    if busq: activos = activos[activos['Nombre'].str.contains(busq, case=False) | activos['Cedula'].str.contains(busq)]
+    activos = df_p[df_p["Estado"] == "ACTIVO"] if df_p is not None else pd.DataFrame()
+    if busq and not activos.empty: 
+        activos = activos[activos['Nombre'].str.contains(busq, case=False) | activos['Cedula'].str.contains(busq)]
 
-    for idx, r_data in activos.iterrows():
-        with st.expander(f"👤 {r_data['Nombre'].upper()}  |  💰 SALDO: ${r_data['Saldo_Restante']}"):
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write("### ℹ️ DETALLES")
-                st.metric("CUOTA", f"${r_data['Cuota_Mensual']}")
-                st.metric("PAGOS", f"{r_data['Pagos_Realizados']}/{r_data['Meses_Totales']}")
-                h_c = df_h[df_h["ID_Prestamo"] == r_data['ID']]
-                # EXCEL PREMIUM
-                st.download_button(f"📥 EXCEL ESTADO DE CUENTA", data=generar_excel_de_gala(r_data, h_c), file_name=f"Reporte_{r_data['Nombre']}.xlsx", key=f"ex_{r_data['ID']}", use_container_width=True)
+    if not activos.empty:
+        for idx, r_data in activos.iterrows():
+            # El expander ahora se mantiene abierto porque no hay rerun forzado
+            with st.expander(f"👤 {r_data['Nombre'].upper()}  |  💰 SALDO: ${r_data['Saldo_Restante']}"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write("### ℹ️ DETALLES")
+                    st.metric("CUOTA", f"${r_data['Cuota_Mensual']}")
+                    st.metric("PAGOS", f"{r_data['Pagos_Realizados']}/{r_data['Meses_Totales']}")
+                    h_c = df_h[df_h["ID_Prestamo"] == r_data['ID']] if df_h is not None else pd.DataFrame()
+                    st.download_button(f"📥 EXCEL ESTADO DE CUENTA", data=generar_excel_de_gala(r_data, h_c), file_name=f"Reporte_{r_data['Nombre']}.xlsx", key=f"ex_{r_data['ID']}_{st.session_state.pago_exitoso_key}", use_container_width=True)
 
-            with col2:
-                st.write("### 💵 PAGAR")
-                # FORMULARIO CON AUTO-RESET
-                with st.form(key=f"f_{r_data['ID']}_{st.session_state.foto_key}", clear_on_submit=True):
-                    n = st.number_input("Cuotas:", min_value=1, value=1, key=f"n_{r_data['ID']}")
-                    st.success(f"TOTAL: ${round(r_data['Cuota_Mensual'] * n, 2)}")
-                    f = st.file_uploader("📸 SUBIR RECIBO:", type=["jpg","png","jpeg"], key=f"foto_{r_data['ID']}_{st.session_state.foto_key}")
-                    
-                    if st.form_submit_button("✅ CONFIRMAR", use_container_width=True, type="primary"):
-                        with st.spinner('Procesando...'):
-                            url = subir_a_imgbb_comprimido(f.getvalue()) if f else ""
-                            new_p = pd.DataFrame([{"ID_Prestamo": r_data['ID'], "Fecha_Pago": datetime.now().strftime("%Y-%m-%d %H:%M"), "Cuotas_Pagadas": n, "Monto_Pagado": round(r_data['Cuota_Mensual']*n, 2), "URL_Comprobante": url}])
-                            conn.update(worksheet="Pagos", data=pd.concat([df_h, new_p], ignore_index=True))
-                            df_p.at[idx, "Pagos_Realizados"] += n
-                            df_p.at[idx, "Saldo_Restante"] = round(max(0, r_data["Saldo_Restante"] - (r_data["Monto_Inicial"]/r_data["Meses_Totales"])*n), 2)
-                            if df_p.at[idx, "Pagos_Realizados"] >= r_data["Meses_Totales"]: df_p.at[idx, "Estado"] = "PAGADO"
-                            conn.update(worksheet="Prestamos", data=df_p)
-                            
-                            st.session_state.foto_key += 1 # RESET DE IMAGEN
-                            st.balloons(); time.sleep(1); st.rerun()
+                with col2:
+                    st.write("### 💵 PAGAR")
+                    # Usamos la llave dinámica solo aquí para limpiar la foto
+                    with st.form(key=f"form_{r_data['ID']}_{st.session_state.pago_exitoso_key}"):
+                        n = st.number_input("Cuotas:", min_value=1, value=1, key=f"n_{r_data['ID']}")
+                        st.success(f"TOTAL: ${round(r_data['Cuota_Mensual'] * n, 2)}")
+                        f = st.file_uploader("📸 RECIBO:", type=["jpg","png","jpeg"], key=f"f_{r_data['ID']}_{st.session_state.pago_exitoso_key}")
+                        
+                        if st.form_submit_button("✅ CONFIRMAR PAGO", use_container_width=True, type="primary"):
+                            with st.spinner('Procesando...'):
+                                url = subir_a_imgbb_comprimido(f.getvalue()) if f else ""
+                                new_p = pd.DataFrame([{"ID_Prestamo": r_data['ID'], "Fecha_Pago": datetime.now().strftime("%Y-%m-%d %H:%M"), "Cuotas_Pagadas": n, "Monto_Pagado": round(r_data['Cuota_Mensual']*n, 2), "URL_Comprobante": url}])
+                                conn.update(worksheet="Pagos", data=pd.concat([df_h, new_p], ignore_index=True))
+                                
+                                # Actualizamos el DataFrame en memoria para que el cambio se vea YA
+                                df_p.at[idx, "Pagos_Realizados"] += n
+                                df_p.at[idx, "Saldo_Restante"] = round(max(0, r_data["Saldo_Restante"] - (r_data["Monto_Inicial"]/r_data["Meses_Totales"])*n), 2)
+                                if df_p.at[idx, "Pagos_Realizados"] >= r_data["Meses_Totales"]: df_p.at[idx, "Estado"] = "PAGADO"
+                                conn.update(worksheet="Prestamos", data=df_p)
+                                
+                                # ¡MAGIA! Incrementamos la llave para limpiar el form pero NO hacemos rerun
+                                st.session_state.pago_exitoso_key += 1
+                                st.balloons()
+                                st.toast("¡Pago registrado con éxito!")
+                                time.sleep(1)
+                                st.rerun() # Hacemos el rerun después del globo para actualizar TODA la lista
             
             if st.button(f"🗑️ BORRAR CLIENTE", key=f"del_{r_data['ID']}", type="secondary", use_container_width=True):
                 conn.update(worksheet="Prestamos", data=df_p[df_p["ID"] != r_data['ID']])
                 conn.update(worksheet="Pagos", data=df_h[df_h["ID_Prestamo"] != r_data['ID']])
-                st.warning("Borrado."); time.sleep(1); st.rerun()
+                st.rerun()
 
 with t_nuevo:
     with st.form("nuevo", clear_on_submit=True):
