@@ -14,10 +14,10 @@ import requests
 import base64
 from openpyxl.styles import PatternFill, Font
 
-# 1. CONFIGURACIÓN DE PÁGINA
-st.set_page_config(page_title="SISTEMA FINANCIERO TOTAL", page_icon="🏦", layout="wide")
+# 1. CONFIGURACIÓN INICIAL
+st.set_page_config(page_title="SISTEMA FINANCIERO MASTER", page_icon="🏦", layout="wide")
 
-# 2. CSS PARA INTERFAZ GIGANTE
+# 2. CSS PARA INTERFAZ GIGANTE (PRO)
 st.markdown("""
     <style>
     .stMarkdown p, label, .stNumberInput label, .stTextInput label { font-size: 26px !important; font-weight: 700 !important; }
@@ -32,7 +32,7 @@ st.markdown("""
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- FUNCIONES CORE ---
+# --- FUNCIONES CORE (REVISADAS) ---
 def cargar(h):
     try:
         df = conn.read(worksheet=h, ttl=0)
@@ -47,12 +47,12 @@ def subir_img(archivo):
         return res.json()["data"]["url"]
     except: return ""
 
-def generar_excel_pintado(df, titulo):
+def generar_excel_grupal(df, titulo):
     out = io.BytesIO()
     with pd.ExcelWriter(out, engine='openpyxl') as writer:
-        ws = writer.book.create_sheet("REPORTE", 0)
+        ws = writer.book.create_sheet("GENERAL", 0)
         f_v, f_r = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid"), PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-        ws.append([f"REPORTE: {titulo}"]); ws.append(["Nombre", "Cédula", "Monto", "Estado"])
+        ws.append([f"REPORTE GENERAL - {titulo}"]); ws.append(["Nombre", "Cédula", "Monto Total", "Estado"])
         for _, row in df.iterrows():
             m = float(row.get('Saldo_Total_Aportado', row.get('Saldo_Restante', 0)))
             ws.append([row['Nombre'], row['Cedula'], m, "AL DÍA" if m > 0 else "PENDIENTE"])
@@ -80,23 +80,23 @@ def enviar_mail(dest, nom, exc, url, tipo):
 
 # --- NAVEGACIÓN ---
 with st.sidebar:
-    st.markdown("# 🏦 PANEL")
-    sec = st.radio("Sección:", ["💰 PRÉSTAMOS", "🤝 COOPERATIVA", "🚑 AYUDAS ECON."], index=0)
+    st.markdown("# 🏦 SISTEMA FINANCIERO")
+    sec = st.radio("MODOS OPERATIVOS:", ["💰 PRÉSTAMOS", "🤝 COOPERATIVA", "🚑 AYUDAS ECON."], index=0)
 
-# --- SECCIONES ---
+# --- 1. MODO PRÉSTAMOS ---
 if sec == "💰 PRÉSTAMOS":
-    st.title("💰 PRÉSTAMOS")
+    st.title("💰 GESTIÓN DE PRÉSTAMOS")
     df_p, df_h = cargar("Prestamos"), cargar("Pagos")
-    if not df_p.empty: st.download_button("📊 EXCEL GRUPAL PRÉSTAMOS", data=generar_excel_pintado(df_p, "PRESTAMOS"), file_name="Reporte_Prestamos.xlsx", use_container_width=True)
+    if not df_p.empty: st.download_button("📊 EXCEL GENERAL PRÉSTAMOS", data=generar_excel_grupal(df_p, "PRESTAMOS"), file_name="Reporte_Prestamos.xlsx", use_container_width=True)
     
     for idx, row in df_p[df_p["Estado"]=="ACTIVO"].iterrows():
         with st.expander(f"👤 {row['Nombre'].upper()} | SALDO: ${row['Saldo_Restante']}"):
             c1, c2 = st.columns(2)
-            with c1: st.metric("CUOTA", f"${row['Cuota_Mensual']}"); st.metric("PAGOS", f"{row['Pagos_Realizados']}/{row['Meses_Totales']}")
+            with c1: st.metric("CUOTA", f"${row['Cuota_Mensual']}"); st.metric("PROGRESO", f"{row['Pagos_Realizados']}/{row['Meses_Totales']}")
             with c2:
                 with st.form(key=f"fp_{row['ID']}"):
                     ft = st.file_uploader("📸 RECIBO:", key=f"ip_{row['ID']}")
-                    if st.form_submit_button("✅ COBRAR"):
+                    if st.form_submit_button("✅ CONFIRMAR COBRO"):
                         if ft:
                             url = subir_img(ft.getvalue())
                             new_h = pd.DataFrame([{"ID_Socio": row['ID'], "Fecha": datetime.now().strftime("%Y-%m-%d"), "Monto": row['Cuota_Mensual'], "Comprobante": url}])
@@ -107,19 +107,20 @@ if sec == "💰 PRÉSTAMOS":
                             if row.get('Email'): enviar_mail(row['Email'], row['Nombre'], generar_excel_personal(df_p.loc[idx], pd.concat([df_h, new_h]), "PRESTAMO"), url, "Prestamos")
                             st.rerun()
 
+# --- 2. MODO COOPERATIVA ---
 elif sec == "🤝 COOPERATIVA":
     st.title("🤝 COOPERATIVA")
     df_s, df_ph = cargar("Cooperativa"), cargar("Pagos_Coop")
-    v_x = st.number_input("💵 VALOR CUOTA ESTÁNDAR:", value=10.0)
-    if not df_s.empty: st.download_button("📊 EXCEL GRUPAL COOP", data=generar_excel_pintado(df_s, "COOP"), file_name="Reporte_Coop.xlsx", use_container_width=True)
+    v_x = st.number_input("💵 VALOR CUOTA FIJA:", value=10.0)
+    if not df_s.empty: st.download_button("📊 EXCEL GENERAL COOP", data=generar_excel_grupal(df_s, "COOP"), file_name="Reporte_Coop.xlsx", use_container_width=True)
     
     for idx, row in df_s.iterrows():
-        with st.expander(f"👤 {row['Nombre'].upper()} | TOTAL: ${row['Saldo_Total_Aportado']}"):
+        with st.expander(f"👤 {row['Nombre'].upper()} | ACUMULADO: ${row['Saldo_Total_Aportado']}"):
             c1, c2 = st.columns(2)
             with c1:
                 with st.form(key=f"fc_{row['ID']}"):
                     m = st.number_input("Monto:", value=v_x); ft = st.file_uploader("📸 RECIBO:", key=f"ic_{row['ID']}")
-                    if st.form_submit_button("✅ REGISTRAR"):
+                    if st.form_submit_button("✅ REGISTRAR PAGO"):
                         if ft:
                             url = subir_img(ft.getvalue())
                             new_h = pd.DataFrame([{"ID_Socio": row['ID'], "Fecha": datetime.now().strftime("%Y-%m-%d"), "Monto": m, "Comprobante": url}])
@@ -130,27 +131,27 @@ elif sec == "🤝 COOPERATIVA":
                             st.rerun()
             with c2: st.download_button(f"📊 EXCEL {row['Nombre'].split()[0]}", data=generar_excel_personal(row, df_ph, "COOP"), file_name=f"Historial_{row['Nombre']}.xlsx", key=f"dlc_{row['ID']}")
 
+# --- 3. MODO AYUDAS ECONÓMICAS ---
 elif sec == "🚑 AYUDAS ECON.":
     st.title("🚑 AYUDAS ECONÓMICAS")
     df_a, df_ah = cargar("Ayudas_Listado"), cargar("Pagos_Ayudas")
-    v_y = st.number_input("💵 APORTE ESTÁNDAR:", value=5.0)
+    v_y = st.number_input("💵 APORTE FIJO:", value=5.0)
     
-    col_a1, col_a2 = st.columns([2, 1])
-    with col_a1:
-        if not df_a.empty: st.download_button("📊 EXCEL GRUPAL AYUDAS", data=generar_excel_pintado(df_a, "AYUDAS"), file_name="Reporte_Ayudas.xlsx", use_container_width=True)
-    with col_a2:
-        if st.button("🔴 REGISTRAR EGRESO CAJA", type="secondary", use_container_width=True):
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        if not df_a.empty: st.download_button("📊 EXCEL GENERAL AYUDAS", data=generar_excel_grupal(df_a, "AYUDAS"), file_name="Reporte_Ayudas.xlsx", use_container_width=True)
+    with col2:
+        if st.button("🔴 REGISTRAR GASTO CAJA", type="secondary", use_container_width=True):
             st.session_state.egreso_ayuda = True
 
     if st.session_state.get('egreso_ayuda'):
         with st.form("eg_ay"):
-            det_e = st.text_input("Motivo del Egreso:")
-            mon_e = st.number_input("Monto a retirar:", min_value=1.0)
+            det_e = st.text_input("Detalle del Gasto:"); mon_e = st.number_input("Monto:", min_value=1.0)
             if st.form_submit_button("⚠️ CONFIRMAR RETIRO"):
-                st.success(f"Gasto de ${mon_e} registrado."); st.session_state.egreso_ayuda = False; st.rerun()
+                st.success(f"Gasto de ${mon_e} guardado."); st.session_state.egreso_ayuda = False; st.rerun()
 
     for idx, row in df_a.iterrows():
-        with st.expander(f"👤 {row['Nombre'].upper()} | TOTAL: ${row['Saldo_Total_Aportado']}"):
+        with st.expander(f"👤 {row['Nombre'].upper()} | ACUMULADO: ${row['Saldo_Total_Aportado']}"):
             c1, c2 = st.columns(2)
             with c1:
                 with st.form(key=f"fa_{row['ID']}"):
