@@ -3,6 +3,7 @@ from streamlit_gsheets import GSheetsConnection
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
+from googleapiclient.errors import HttpError # <-- NUEVA LIBRERÍA PARA LEER EL ERROR
 import pandas as pd
 import uuid
 import io
@@ -14,18 +15,29 @@ ID_CARPETA_DRIVE = "1TwmKxziawFk5qWTCy1De12adpIxEnOha"
 
 def obtener_servicio_drive():
     info = st.secrets["connections"]["gsheets"]
-    # ⚠️ AQUÍ ESTÁ LA CORRECCIÓN CLAVE: Declarar explícitamente el permiso de Drive
     SCOPES = ['https://www.googleapis.com/auth/drive']
     creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
     return build('drive', 'v3', credentials=creds)
 
 def subir_a_drive(archivo_bytes, nombre_archivo, mime_type):
-    servicio = obtener_servicio_drive()
-    metadatos = {'name': nombre_archivo, 'parents': [ID_CARPETA_DRIVE]}
-    # Ahora respeta si es jpg o png
-    media = MediaIoBaseUpload(io.BytesIO(archivo_bytes), mimetype=mime_type)
-    archivo = servicio.files().create(body=metadatos, media_body=media, fields='id').execute()
-    return archivo.get('id')
+    try:
+        servicio = obtener_servicio_drive()
+        metadatos = {'name': nombre_archivo, 'parents': [ID_CARPETA_DRIVE]}
+        media = MediaIoBaseUpload(io.BytesIO(archivo_bytes), mimetype=mime_type)
+        
+        # Agregamos supportsAllDrives por si tu carpeta está en una unidad compartida
+        archivo = servicio.files().create(
+            body=metadatos, 
+            media_body=media, 
+            fields='id',
+            supportsAllDrives=True 
+        ).execute()
+        
+        return archivo.get('id')
+    except HttpError as error:
+        # AQUÍ OBLIGAMOS A MOSTRAR LA VERDAD
+        st.error(f"🔍 GOOGLE DICE EXACTAMENTE ESTO: {error}")
+        st.stop()
 
 # --- CONFIGURACIÓN DE INTERFAZ PANORÁMICA ---
 st.set_page_config(page_title="Sistema Pro de Préstamos", page_icon="🏦", layout="wide")
@@ -57,14 +69,12 @@ except Exception as e:
     st.error("Esperando conexión con Google Sheets. Verifica tus Secrets.")
     st.stop()
 
-# Si la base está totalmente vacía desde Google, le damos formato
 if df_prestamos.empty:
     columnas = ["ID", "Fecha", "Nombre", "Cedula", "Monto_Inicial", "Saldo_Restante", "Cuota_Mensual", "Meses_Totales", "Pagos_Realizados", "Estado", "Tasa"]
     df_prestamos = pd.DataFrame(columns=columnas)
 
 tab1, tab2, tab3, tab4 = st.tabs(["➕ Nuevo Préstamo", "📋 Lista de Clientes", "🔍 Auditoría", "💵 Registrar Pagos"])
 
-# PESTAÑA 1: CREACIÓN
 with tab1:
     st.subheader("Registrar nuevo crédito")
     with st.form("form_nuevo"):
@@ -92,7 +102,6 @@ with tab1:
                     time.sleep(2)
                     st.rerun()
 
-# PESTAÑA 2: LISTA GENERAL
 with tab2:
     st.subheader("Estado actual de la cartera")
     if not df_prestamos.empty:
@@ -102,7 +111,6 @@ with tab2:
     else:
         st.info("No hay datos en la nube de Google.")
 
-# PESTAÑA 3: AUDITORÍA BÁSICA
 with tab3:
     st.subheader("Resumen general")
     if not df_prestamos.empty:
@@ -110,7 +118,6 @@ with tab3:
     else:
         st.info("Base de datos vacía.")
 
-# PESTAÑA 4: COBRANZA CON DRIVE
 with tab4:
     st.subheader("Módulo de Cobranza y Comprobantes")
     activos_pago = df_prestamos[df_prestamos["Estado"] == "ACTIVO"]
@@ -126,21 +133,16 @@ with tab4:
             cuotas_pagar = st.number_input("Número de cuotas a pagar hoy:", min_value=1, max_value=int(cliente_info['Meses_Totales'] - cliente_info['Pagos_Realizados']), value=1)
         with c2:
             st.write(f"### Total a recibir: ${round(float(cliente_info['Cuota_Mensual']) * cuotas_pagar, 2)}")
-            # Aceptamos JPG y PNG
             comprobante = st.file_uploader("Subir foto del pago a Google Drive:", type=["jpg", "jpeg", "png"])
 
         if st.button("✅ Confirmar Pago Permanente", use_container_width=True):
             with st.spinner('Subiendo evidencia a Drive y actualizando Sheets...'):
-                
-                # 1. Subir a Drive
                 if comprobante:
                     ext = comprobante.name.split('.')[-1] if '.' in comprobante.name else 'png'
-                    tipo_mime = comprobante.type # Identifica si es image/jpeg o image/png
+                    tipo_mime = comprobante.type
                     nombre_archivo_drive = f"Recibo_{id_cliente}_{datetime.now().strftime('%Y%m%d_%H%M')}.{ext}"
-                    # Enviamos el archivo, el nombre y el tipo exacto
                     subir_a_drive(comprobante.getvalue(), nombre_archivo_drive, tipo_mime)
                 
-                # 2. Actualizar Sheets
                 idx = df_prestamos[df_prestamos["ID"] == id_cliente].index[0]
                 df_prestamos.at[idx, "Pagos_Realizados"] += cuotas_pagar
                 abono = (float(cliente_info['Monto_Inicial']) / int(cliente_info['Meses_Totales'])) * cuotas_pagar
