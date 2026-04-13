@@ -19,7 +19,7 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 # 1. CONFIGURACIÓN
 st.set_page_config(page_title="SISTEMA PRO", page_icon="🏦", layout="wide")
 
-# 2. CSS PERSONALIZADO (BOTÓN CIRCULAR Y ESTILO GIGANTE)
+# 2. CSS PERSONALIZADO (BOTÓN FLOTANTE NEÓN Y ESTILO GIGANTE)
 st.markdown("""
     <style>
     /* Estilo Gigante General */
@@ -32,21 +32,28 @@ st.markdown("""
         border-radius: 20px !important; background-color: #28a745 !important; color: white !important; 
     }
     
-    /* BOTÓN CIRCULAR LLAMATIVO (NUEVO) */
+    /* SUPER BOTÓN FLOTANTE LLAMATIVO (👤➕) */
     div.stButton > button:first-child[key^="btn_nuevo_circular"] {
-        background-color: #007bff !important;
+        background-color: #ff5722 !important; /* Naranja Neón */
         color: white !important;
         border-radius: 50% !important;
-        width: 100px !important;
-        height: 100px !important;
-        font-size: 50px !important;
+        width: 120px !important; /* Más Grande */
+        height: 120px !important; /* Más Grande */
+        font-size: 60px !important; /* Icono Gigante */
         font-weight: bold !important;
-        box-shadow: 0px 10px 20px rgba(0,0,0,0.3) !important;
-        border: none !important;
+        box-shadow: 0px 15px 30px rgba(255, 87, 34, 0.5) !important; /* Sombra Neón */
+        border: 4px solid white !important; /* Borde para resaltar */
         position: fixed;
-        bottom: 30px;
-        right: 30px;
-        z-index: 999;
+        bottom: 40px;
+        right: 40px;
+        z-index: 9999;
+        transition: transform 0.2s ease-in-out;
+    }
+    
+    /* Efecto al pasar el mouse */
+    div.stButton > button:first-child[key^="btn_nuevo_circular"]:hover {
+        transform: scale(1.1);
+        box-shadow: 0px 20px 40px rgba(255, 87, 34, 0.7) !important;
     }
 
     [data-testid="stMetricValue"] { font-size: 85px !important; font-weight: 900 !important; color: #007bff !important; }
@@ -108,7 +115,7 @@ def enviar_mail(dest, nom, exc, url):
     try:
         msg = MIMEMultipart(); msg['From'] = st.secrets["EMAIL_USER"]; msg['To'] = dest; msg['Subject'] = f"✅ Pago - {nom}"
         msg.attach(MIMEText(f"Hola {nom}, adjunto tu reporte.\nRecibo: {url}", 'plain'))
-        p = MIMEBase('application', 'octet-stream'); p.set_payload(exc); encoders.encode_base_4(p)
+        p = MIMEBase('application', 'octet-stream'); p.set_payload(exc); encoders.encode_base64(p)
         p.add_header('Content-Disposition', f"attachment; filename=Estado_{nom}.xlsx"); msg.attach(p)
         s = smtplib.SMTP('smtp.gmail.com', 587); s.starttls(); s.login(st.secrets["EMAIL_USER"], st.secrets["EMAIL_PASS"]); s.send_message(msg); s.quit()
     except: pass
@@ -118,21 +125,21 @@ st.title("🏦 PANEL DE CONTROL")
 df_p, df_h = cargar_datos()
 
 if df_p is not None:
-    # --- BOTÓN CIRCULAR FLOTANTE (ESTÉTICO) ---
-    if st.button("+", key="btn_nuevo_circular"):
+    # --- SUPER BOTÓN FLOTANTE (👤➕) ---
+    if st.button("👤➕", key="btn_nuevo_circular"):
         st.session_state.mostrar_nuevo = not st.session_state.mostrar_nuevo
 
     # --- FORMULARIO NUEVO (SOLO SI SE ACTIVA) ---
     if st.session_state.mostrar_nuevo:
         with st.container():
-            st.markdown("### ➕ REGISTRAR NUEVO NOMBRE")
+            st.markdown("### 👤➕ REGISTRAR NUEVO NOMBRE")
             with st.form("n_form", clear_on_submit=True):
                 nm, cd, ml = st.text_input("Nombre:"), st.text_input("Cédula:"), st.text_input("Correo:")
                 c1, c2, c3 = st.columns(3)
                 mn, ts, pz = c1.number_input("Monto:"), c3.number_input("Tasa %:"), c2.number_input("Meses:")
                 if st.form_submit_button("💾 GUARDAR NUEVO", use_container_width=True):
                     tm = (ts/100)/12; cu = mn * (tm * (1+tm)**pz) / ((1+tm)**pz - 1) if tm > 0 else mn/pz
-                    new = pd.DataFrame([{"ID": str(uuid.uuid4())[:8], "Fecha": datetime.now().strftime("%Y-%m-%d"), "Nombre": nm, "Cedula": cd, "Email": ml, "Monto_Inicial": mn, "Saldo_Restante": mn, "Cuota_Mensual": round(cu, 2), "Meses_Totales": int(pz), "Pagos_Realizados": 0, "Estado": "ACTIVO", "Tasa": ts}])
+                    new = pd.DataFrame([{"ID": str(uuid.uuid4())[:8], "Fecha": datetime.now().strftime("%Y-%m-%d"), "Nombre": nm, "Cedula": cid, "Email": ml, "Monto_Inicial": mn, "Saldo_Restante": mn, "Cuota_Mensual": round(cu, 2), "Meses_Totales": int(pz), "Pagos_Realizados": 0, "Estado": "ACTIVO", "Tasa": ts}])
                     conn.update(worksheet="Prestamos", data=pd.concat([df_p, new], ignore_index=True))
                     st.session_state.mostrar_nuevo = False
                     st.balloons(); time.sleep(0.5); st.rerun()
