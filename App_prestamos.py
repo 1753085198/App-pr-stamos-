@@ -14,37 +14,17 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 # 1. CONFIGURACIÓN DE PÁGINA
 st.set_page_config(page_title="CONTROL DE PRESTAMOS PRO", page_icon="🏦", layout="wide")
 
-# 2. CSS PARA INTERFAZ ULTRA-GIGANTE Y BOTONES ESTILIZADOS
+# 2. CSS PARA INTERFAZ ULTRA-GIGANTE
 st.markdown("""
     <style>
     button[data-baseweb="tab"] { font-size: 40px !important; font-weight: 900 !important; height: 100px !important; }
-    .stMarkdown p, label, .stSelectbox p, .stNumberInput label, .stTextInput label { 
-        font-size: 32px !important; font-weight: 700 !important; 
-    }
+    .stMarkdown p, label, .stSelectbox p, .stNumberInput label, .stTextInput label { font-size: 32px !important; font-weight: 700 !important; }
     input { font-size: 30px !important; height: 70px !important; }
-    
-    /* BOTÓN PRIMARIO (VERDE) */
     .stButton>button[kind="primary"], .stDownloadButton>button { 
         font-size: 35px !important; font-weight: 900 !important; height: 7rem !important; 
         border-radius: 20px !important; background-color: #28a745 !important; color: white !important; 
         box-shadow: 0px 8px 16px rgba(0,0,0,0.3) !important;
     }
-    
-    /* BOTÓN ELIMINAR (CIRCULAR / DISCRETO) */
-    .btn-borrar {
-        border: 2px solid #ff4b4b !important;
-        color: #ff4b4b !important;
-        background-color: transparent !important;
-        border-radius: 50% !important;
-        width: 60px !important;
-        height: 60px !important;
-        font-size: 25px !important;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
-    }
-    
     [data-testid="stMetricValue"] { font-size: 90px !important; font-weight: 900 !important; color: #007bff !important; }
     .streamlit-expanderHeader { font-size: 38px !important; font-weight: 800 !important; padding: 25px !important; }
     </style>
@@ -52,7 +32,10 @@ st.markdown("""
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- FUNCIONES CORE ---
+# --- INICIALIZACIÓN DE ESTADOS ---
+if 'pago_key' not in st.session_state: st.session_state.pago_key = 0
+if 'cliente_abierto' not in st.session_state: st.session_state.cliente_abierto = None
+
 def cargar_datos():
     df_p = conn.read(worksheet="Prestamos", ttl="0")
     df_h = conn.read(worksheet="Pagos", ttl="0")
@@ -111,8 +94,6 @@ df_p, df_h = cargar_datos()
 
 t_gestion, t_nuevo = st.tabs(["📋 GESTIÓN", "➕ NUEVO"])
 
-if 'pago_key' not in st.session_state: st.session_state.pago_key = 0
-
 with t_gestion:
     busq = st.text_input("🔍 BUSCAR CLIENTE:", placeholder="Nombre o Cédula...")
     activos = df_p[df_p["Estado"] == "ACTIVO"] if df_p is not None else pd.DataFrame()
@@ -121,7 +102,12 @@ with t_gestion:
 
     if not activos.empty:
         for idx, r_data in activos.iterrows():
-            with st.expander(f"👤 {r_data['Nombre'].upper()}  |  💰 SALDO: ${r_data['Saldo_Restante']}"):
+            # Mantenemos el expander abierto si el ID coincide con el guardado
+            is_open = st.session_state.cliente_abierto == r_data['ID']
+            with st.expander(f"👤 {r_data['Nombre'].upper()}  |  💰 SALDO: ${r_data['Saldo_Restante']}", expanded=is_open):
+                # Si el usuario abre este expander, lo guardamos como 'abierto'
+                st.session_state.cliente_abierto = r_data['ID']
+                
                 col1, col2 = st.columns(2)
                 with col1:
                     st.write("### ℹ️ RESUMEN")
@@ -132,41 +118,35 @@ with t_gestion:
 
                 with col2:
                     st.write("### 💵 COBRAR")
+                    # El key del formulario incluye pago_key para forzar el vaciado del uploader
                     with st.form(key=f"form_{r_data['ID']}_{st.session_state.pago_key}"):
                         n = st.number_input("Cuotas:", min_value=1, value=1, key=f"n_{r_data['ID']}")
                         st.success(f"TOTAL: ${round(r_data['Cuota_Mensual'] * n, 2)}")
                         f = st.file_uploader("📸 RECIBO:", type=["jpg","png","jpeg"], key=f"f_{r_data['ID']}_{st.session_state.pago_key}")
+                        
                         if st.form_submit_button("✅ CONFIRMAR PAGO", use_container_width=True, type="primary"):
                             with st.spinner('Procesando...'):
                                 url = subir_a_imgbb_comprimido(f.getvalue()) if f else ""
                                 np = pd.DataFrame([{"ID_Prestamo": r_data['ID'], "Fecha_Pago": datetime.now().strftime("%Y-%m-%d %H:%M"), "Cuotas_Pagadas": n, "Monto_Pagado": round(r_data['Cuota_Mensual']*n, 2), "URL_Comprobante": url}])
                                 conn.update(worksheet="Pagos", data=pd.concat([df_h, np], ignore_index=True))
+                                
                                 df_p.at[idx, "Pagos_Realizados"] += n
                                 df_p.at[idx, "Saldo_Restante"] = round(max(0, r_data["Saldo_Restante"] - (r_data["Monto_Inicial"]/r_data["Meses_Totales"])*n), 2)
                                 if df_p.at[idx, "Pagos_Realizados"] >= r_data["Meses_Totales"]: df_p.at[idx, "Estado"] = "PAGADO"
                                 conn.update(worksheet="Prestamos", data=df_p)
+                                
+                                # Actualizamos llaves para limpiar uploader y mantener expander
                                 st.session_state.pago_key += 1
-                                st.balloons(); time.sleep(1); st.rerun()
+                                st.balloons()
+                                time.sleep(1)
+                                st.rerun()
 
-                # --- SECCIÓN DE BORRADO DISCRETA ---
                 st.write("---")
-                col_del1, col_del2 = st.columns([4, 1])
-                with col_del2:
-                    # Botón circular con icono de basura
-                    if st.button("🗑️", key=f"trash_{r_data['ID']}", help="Eliminar Cliente"):
-                        st.session_state[f"confirm_del_{r_data['ID']}"] = True
-                
-                # Si se presionó la basura, salta la confirmación
-                if st.session_state.get(f"confirm_del_{r_data['ID']}", False):
-                    st.error(f"⚠️ ¿Estás seguro de eliminar a {r_data['Nombre']}?")
-                    c_si, c_no = st.columns(2)
-                    if c_si.button("SÍ, ELIMINAR", key=f"si_{r_data['ID']}", use_container_width=True):
-                        conn.update(worksheet="Prestamos", data=df_p[df_p["ID"] != r_data['ID']])
-                        conn.update(worksheet="Pagos", data=df_h[df_h["ID_Prestamo"] != r_data['ID']])
-                        st.rerun()
-                    if c_no.button("NO, CANCELAR", key=f"no_{r_data['ID']}", use_container_width=True):
-                        st.session_state[f"confirm_del_{r_data['ID']}"] = False
-                        st.rerun()
+                if st.button("🗑️ ELIMINAR CLIENTE", key=f"trash_{r_data['ID']}", use_container_width=True, type="secondary"):
+                    conn.update(worksheet="Prestamos", data=df_p[df_p["ID"] != r_data['ID']])
+                    conn.update(worksheet="Pagos", data=df_h[df_h["ID_Prestamo"] != r_data['ID']])
+                    st.session_state.cliente_abierto = None # Reseteamos vista
+                    st.rerun()
 
 with t_nuevo:
     with st.form("nuevo", clear_on_submit=True):
