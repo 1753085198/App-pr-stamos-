@@ -16,19 +16,19 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 def cargar_datos():
     df = conn.read(ttl="0")
     if not df.empty:
-        # CORRECCIÓN DEL ERROR DEL TELÉFONO: Forzamos todo a texto para evitar TypeErrors
+        # Forzamos todo a texto para que no haya TypeErrors en el celular
         df["Cedula"] = df["Cedula"].astype(str).str.replace(".0", "", regex=False)
         df["ID"] = df["ID"].astype(str).str.replace(".0", "", regex=False)
         df["Nombre"] = df["Nombre"].astype(str)
         
-        # Si la columna Comprobante_URL no existe, la creamos
         if "Comprobante_URL" not in df.columns:
             df["Comprobante_URL"] = ""
     return df
 
-# --- NUEVA FUNCIÓN: SUBIR FOTO A IMGBB ---
+# --- FUNCIÓN: SUBIR FOTO A IMGBB ---
 def subir_a_imgbb(archivo_bytes):
-    api_key = st.secrets["IMGBB_API_KEY"]
+    # Esto busca la llave que pusiste hasta arriba en los Secrets
+    api_key = st.secrets["IMGBB_API_KEY"] 
     url = "https://api.imgbb.com/1/upload"
     payload = {
         "key": api_key,
@@ -107,13 +107,12 @@ with tab2:
 with tab3:
     st.subheader("Resumen general")
     if not df_prestamos.empty:
-        # Mostramos la tabla completa, donde se podrá hacer clic en los links de ImgBB
         st.dataframe(
             df_prestamos, 
             use_container_width=True, 
             height=500,
             column_config={
-                "Comprobante_URL": st.column_config.LinkColumn("Último Comprobante")
+                "Comprobante_URL": st.column_config.LinkColumn("Ver Último Comprobante")
             }
         )
     else:
@@ -125,7 +124,7 @@ with tab4:
     activos_pago = df_prestamos[df_prestamos["Estado"] == "ACTIVO"]
     
     if not activos_pago.empty:
-        # CORRECCIÓN AQUÍ: Evitamos el TypeError asegurando que todo es texto
+        # BLINDAJE: Todo convertido a texto explícitamente para evitar TypeError
         opciones_pago = activos_pago["Nombre"].astype(str) + " (ID: " + activos_pago["ID"].astype(str) + ")"
         seleccion = st.selectbox("Seleccionar Cliente:", opciones_pago)
         
@@ -141,20 +140,17 @@ with tab4:
             comprobante = st.file_uploader("Subir foto del pago:", type=["jpg", "jpeg", "png"])
 
         if st.button("✅ Confirmar Pago", use_container_width=True):
-            with st.spinner('Procesando pago y subiendo evidencia...'):
+            with st.spinner('Procesando pago y subiendo evidencia a ImgBB...'):
                 url_foto = ""
-                # 1. Subir a ImgBB si hay foto
                 if comprobante:
                     url_foto = subir_a_imgbb(comprobante.getvalue())
                 
-                # 2. Actualizar Sheets
                 idx = df_prestamos[df_prestamos["ID"] == id_cliente].index[0]
                 df_prestamos.at[idx, "Pagos_Realizados"] += cuotas_pagar
                 abono = (float(cliente_info['Monto_Inicial']) / int(cliente_info['Meses_Totales'])) * cuotas_pagar
                 df_prestamos.at[idx, "Saldo_Restante"] = round(max(0, float(cliente_info['Saldo_Restante']) - abono), 2)
                 
-                if url_foto and url_foto != "Error al subir":
-                    # Agregamos el link al Excel
+                if url_foto and url_foto != "Error al subir" and url_foto != "Error de conexión":
                     df_prestamos.at[idx, "Comprobante_URL"] = url_foto
                 
                 if int(df_prestamos.at[idx, "Pagos_Realizados"]) >= int(cliente_info['Meses_Totales']):
