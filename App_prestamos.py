@@ -10,18 +10,20 @@ import time
 from datetime import datetime
 
 # --- CONFIGURACIÓN DE SEGURIDAD Y NUBE ---
-# ¡AQUÍ ESTÁ TU ID DE DRIVE INTEGRADO!
 ID_CARPETA_DRIVE = "1TwmKxziawFk5qWTCy1De12adpIxEnOha"
 
 def obtener_servicio_drive():
     info = st.secrets["connections"]["gsheets"]
-    creds = service_account.Credentials.from_service_account_info(info)
+    # ⚠️ AQUÍ ESTÁ LA CORRECCIÓN CLAVE: Declarar explícitamente el permiso de Drive
+    SCOPES = ['https://www.googleapis.com/auth/drive']
+    creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
     return build('drive', 'v3', credentials=creds)
 
-def subir_a_drive(archivo_bytes, nombre_archivo):
+def subir_a_drive(archivo_bytes, nombre_archivo, mime_type):
     servicio = obtener_servicio_drive()
     metadatos = {'name': nombre_archivo, 'parents': [ID_CARPETA_DRIVE]}
-    media = MediaIoBaseUpload(io.BytesIO(archivo_bytes), mimetype='image/png')
+    # Ahora respeta si es jpg o png
+    media = MediaIoBaseUpload(io.BytesIO(archivo_bytes), mimetype=mime_type)
     archivo = servicio.files().create(body=metadatos, media_body=media, fields='id').execute()
     return archivo.get('id')
 
@@ -124,14 +126,19 @@ with tab4:
             cuotas_pagar = st.number_input("Número de cuotas a pagar hoy:", min_value=1, max_value=int(cliente_info['Meses_Totales'] - cliente_info['Pagos_Realizados']), value=1)
         with c2:
             st.write(f"### Total a recibir: ${round(float(cliente_info['Cuota_Mensual']) * cuotas_pagar, 2)}")
+            # Aceptamos JPG y PNG
             comprobante = st.file_uploader("Subir foto del pago a Google Drive:", type=["jpg", "jpeg", "png"])
 
         if st.button("✅ Confirmar Pago Permanente", use_container_width=True):
             with st.spinner('Subiendo evidencia a Drive y actualizando Sheets...'):
+                
                 # 1. Subir a Drive
                 if comprobante:
                     ext = comprobante.name.split('.')[-1] if '.' in comprobante.name else 'png'
-                    subir_a_drive(comprobante.getvalue(), f"Recibo_{id_cliente}_{datetime.now().strftime('%Y%m%d_%H%M')}.{ext}")
+                    tipo_mime = comprobante.type # Identifica si es image/jpeg o image/png
+                    nombre_archivo_drive = f"Recibo_{id_cliente}_{datetime.now().strftime('%Y%m%d_%H%M')}.{ext}"
+                    # Enviamos el archivo, el nombre y el tipo exacto
+                    subir_a_drive(comprobante.getvalue(), nombre_archivo_drive, tipo_mime)
                 
                 # 2. Actualizar Sheets
                 idx = df_prestamos[df_prestamos["ID"] == id_cliente].index[0]
