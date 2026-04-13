@@ -10,10 +10,10 @@ import time
 from datetime import datetime
 
 # --- CONFIGURACIÓN DE SEGURIDAD Y NUBE ---
-ID_CARPETA_DRIVE = "TU_ID_DE_CARPETA_EN_DRIVE" # El código de la URL de tu carpeta de Drive
+ID_CARPETA_DRIVE = "TU_ID_DE_CARPETA_EN_DRIVE" # Recuerda poner aquí tu ID de carpeta
 
 def obtener_servicio_drive():
-    info = st.secrets["gcp_service_account"]
+    info = st.secrets["connections"]["gsheets"] # <-- AQUÍ ESTÁ LA CORRECCIÓN
     creds = service_account.Credentials.from_service_account_info(info)
     return build('drive', 'v3', credentials=creds)
 
@@ -25,7 +25,7 @@ def subir_a_drive(archivo_bytes, nombre_archivo):
     return archivo.get('id')
 
 # --- CONFIGURACIÓN DE INTERFAZ PANORÁMICA ---
-st.set_page_config(page_title="Sistema Pro Jose Figueroa", page_icon="🏦", layout="wide")
+st.set_page_config(page_title="Sistema Pro de Préstamos", page_icon="🏦", layout="wide")
 
 # Conexión a Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -46,11 +46,20 @@ def calcular_cuota(capital, meses, tasa_anual):
 
 # --- INTERFAZ PRINCIPAL ---
 st.title("🏦 Sistema Integral de Préstamos y Cobranza")
-st.write("Bienvenido al centro de mando. Aquí puedes gestionar tu cartera de clientes con total seguridad.")
+st.write("Bienvenido al centro de mando. Gestiona tu cartera con total seguridad en la nube.")
 
-df_prestamos = cargar_datos()
+try:
+    df_prestamos = cargar_datos()
+except Exception as e:
+    st.error("Esperando conexión con Google Sheets. Verifica tus Secrets.")
+    st.stop()
 
-tab1, tab2, tab3, tab4 = st.tabs(["➕ Nuevo Préstamo", "📋 Lista de Clientes", "🔍 Detalles y Auditoría", "💵 Registrar Pagos"])
+# Si la base está totalmente vacía desde Google, le damos formato
+if df_prestamos.empty:
+    columnas = ["ID", "Fecha", "Nombre", "Cedula", "Monto_Inicial", "Saldo_Restante", "Cuota_Mensual", "Meses_Totales", "Pagos_Realizados", "Estado", "Tasa"]
+    df_prestamos = pd.DataFrame(columns=columnas)
+
+tab1, tab2, tab3, tab4 = st.tabs(["➕ Nuevo Préstamo", "📋 Lista de Clientes", "🔍 Auditoría", "💵 Registrar Pagos"])
 
 # PESTAÑA 1: CREACIÓN
 with tab1:
@@ -74,12 +83,13 @@ with tab1:
                     }])
                     df_actualizado = pd.concat([df_prestamos, nuevo_registro], ignore_index=True)
                     conn.update(data=df_actualizado)
+                    
                     st.balloons()
                     st.success(f"Préstamo para {nombre} registrado exitosamente.")
                     time.sleep(2)
                     st.rerun()
 
-# PESTAÑA 2: LISTA GENERAL (VISTA PANORÁMICA)
+# PESTAÑA 2: LISTA GENERAL
 with tab2:
     st.subheader("Estado actual de la cartera")
     if not df_prestamos.empty:
@@ -88,6 +98,14 @@ with tab2:
         st.dataframe(activos, use_container_width=True, height=450)
     else:
         st.info("No hay datos en la nube de Google.")
+
+# PESTAÑA 3: AUDITORÍA BÁSICA
+with tab3:
+    st.subheader("Resumen general")
+    if not df_prestamos.empty:
+        st.dataframe(df_prestamos, use_container_width=True, height=500)
+    else:
+        st.info("Base de datos vacía.")
 
 # PESTAÑA 4: COBRANZA CON DRIVE
 with tab4:
@@ -123,6 +141,7 @@ with tab4:
                     df_prestamos.at[idx, "Estado"] = "PAGADO"
                 
                 conn.update(data=df_prestamos)
+                
                 st.balloons()
                 st.success("¡Pago registrado y asegurado en la nube!")
                 time.sleep(3)
