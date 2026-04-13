@@ -1,274 +1,129 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
 import pandas as pd
-import os
 import uuid
 import io
-import glob
-import time # <-- NUEVO: Para manejar los tiempos de animación
+import time
 from datetime import datetime
-from openpyxl.drawing.image import Image as xlImage
 
-ARCHIVO_BD = "base_prestamos.csv"
-CARPETA_COMPROBANTES = "comprobantes"
+# --- CONFIGURACIÓN DE SEGURIDAD Y NUBE ---
+ID_CARPETA_DRIVE = "TU_ID_DE_CARPETA_EN_DRIVE" # El código de la URL de tu carpeta de Drive
 
-if not os.path.exists(CARPETA_COMPROBANTES):
-    os.makedirs(CARPETA_COMPROBANTES)
+def obtener_servicio_drive():
+    info = st.secrets["gcp_service_account"]
+    creds = service_account.Credentials.from_service_account_info(info)
+    return build('drive', 'v3', credentials=creds)
 
-# --- FUNCIONES DE BASE DE DATOS Y CÁLCULO ---
-def cargar_bd():
-    if os.path.exists(ARCHIVO_BD):
-        df = pd.read_csv(ARCHIVO_BD, dtype={"Cedula": str, "ID": str})
-        if "Tasa" not in df.columns:
-            df["Tasa"] = 15.0
-        return df
-    else:
-        columnas = ["ID", "Fecha", "Nombre", "Cedula", "Monto_Inicial", "Saldo_Restante", "Cuota_Mensual", "Meses_Totales", "Pagos_Realizados", "Estado", "Tasa"]
-        df = pd.DataFrame(columns=columnas)
-        df.to_csv(ARCHIVO_BD, index=False)
-        return df
+def subir_a_drive(archivo_bytes, nombre_archivo):
+    servicio = obtener_servicio_drive()
+    metadatos = {'name': nombre_archivo, 'parents': [ID_CARPETA_DRIVE]}
+    media = MediaIoBaseUpload(io.BytesIO(archivo_bytes), mimetype='image/png')
+    archivo = servicio.files().create(body=metadatos, media_body=media, fields='id').execute()
+    return archivo.get('id')
 
-def guardar_bd(df):
-    df.to_csv(ARCHIVO_BD, index=False)
+# --- CONFIGURACIÓN DE INTERFAZ PANORÁMICA ---
+st.set_page_config(page_title="Sistema Pro Jose Figueroa", page_icon="🏦", layout="wide")
 
+# Conexión a Google Sheets
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+def cargar_datos():
+    df = conn.read(ttl="0")
+    if not df.empty:
+        df["Cedula"] = df["Cedula"].astype(str).str.replace(".0", "", regex=False)
+        df["ID"] = df["ID"].astype(str).str.replace(".0", "", regex=False)
+    return df
+
+# --- MATEMÁTICA FINANCIERA ---
 def calcular_cuota(capital, meses, tasa_anual):
     tasa_mensual = (tasa_anual / 100) / 12
     if tasa_mensual > 0:
         return capital * (tasa_mensual * (1 + tasa_mensual)**meses) / ((1 + tasa_mensual)**meses - 1)
     return capital / meses
 
-def generar_tabla_completa(capital, meses, tasa_anual):
-    tasa_mensual = (tasa_anual / 100) / 12
-    cuota = calcular_cuota(capital, meses, tasa_anual)
-    saldo_restante = capital
-    datos_tabla = []
-    
-    for mes in range(1, int(meses) + 1):
-        interes_pagado = saldo_restante * tasa_mensual
-        capital_pagado = cuota - interes_pagado
-        saldo_restante -= capital_pagado
-        if saldo_restante < 0.01: saldo_restante = 0
-            
-        datos_tabla.append({
-            "Mes": mes,
-            "Cuota Fija": round(cuota, 2),
-            "Abono a Capital": round(capital_pagado, 2),
-            "Interés Pagado": round(interes_pagado, 2),
-            "Saldo Restante": round(saldo_restante, 2)
-        })
-    return pd.DataFrame(datos_tabla)
+# --- INTERFAZ PRINCIPAL ---
+st.title("🏦 Sistema Integral de Préstamos y Cobranza")
+st.write("Bienvenido al centro de mando. Aquí puedes gestionar tu cartera de clientes con total seguridad.")
 
-def generar_excel(nombre, cedula, capital, meses, tasa_anual, df_tabla, id_cliente):
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        df_tabla.to_excel(writer, index=False, startrow=7, sheet_name="Amortizacion")
-        workbook = writer.book
-        worksheet = writer.sheets["Amortizacion"]
-        
-        worksheet["A1"] = "REPORTE DE PRÉSTAMO"
-        worksheet["A2"] = "Nombre del Cliente:"
-        worksheet["B2"] = nombre
-        worksheet["A3"] = "Cédula:"
-        worksheet["B3"] = cedula
-        worksheet["A4"] = "Monto:"
-        worksheet["B4"] = f"${capital:,.2f}"
-        worksheet["A5"] = "Plazo:"
-        worksheet["B5"] = meses
-        worksheet["A6"] = "Tasa Anual:"
-        worksheet["B6"] = f"{tasa_anual}%"
+df_prestamos = cargar_datos()
 
-        worksheet.column_dimensions['A'].width = 22
-        worksheet.column_dimensions['B'].width = 15
-        worksheet.column_dimensions['C'].width = 18
-        worksheet.column_dimensions['D'].width = 18
-        worksheet.column_dimensions['E'].width = 18
+tab1, tab2, tab3, tab4 = st.tabs(["➕ Nuevo Préstamo", "📋 Lista de Clientes", "🔍 Detalles y Auditoría", "💵 Registrar Pagos"])
 
-        hoja_comp = workbook.create_sheet("Comprobantes")
-        hoja_comp["A1"] = f"COMPROBANTES DE PAGO - {nombre}"
-        hoja_comp.column_dimensions['A'].width = 40
-        
-        patron = os.path.join(CARPETA_COMPROBANTES, f"*_{id_cliente}_*.*")
-        archivos_imagenes = glob.glob(patron)
-        archivos_imagenes.sort()
-        
-        fila_actual = 3
-        if not archivos_imagenes: 
-            hoja_comp["A3"] = "No hay comprobantes registrados aún."
-        else:
-            for ruta_img in archivos_imagenes:
-                try:
-                    nombre_archivo = os.path.basename(ruta_img)
-                    mes_texto = nombre_archivo.split("_")[1] 
-                    hoja_comp[f"A{fila_actual}"] = f"Comprobante - Cuota {mes_texto}"
-                    fila_actual += 1
-                    
-                    img = xlImage(ruta_img)
-                    img.width = 300
-                    img.height = 400
-                    hoja_comp.add_image(img, f"A{fila_actual}")
-                    fila_actual += 22 
-                except Exception as e:
-                    hoja_comp[f"A{fila_actual}"] = f"Error al cargar imagen: {ruta_img}"
-                    fila_actual += 2
-    return buffer
-
-def resaltar_pagados(row, pagos_hechos):
-    if row['Mes'] <= pagos_hechos:
-        return ['background-color: #d4edda; color: #155724'] * len(row) 
-    return [''] * len(row)
-
-# --- CONFIGURACIÓN DE PÁGINA (MODO PANORÁMICO PARA LAPTOP) ---
-# Al poner layout="wide", aprovechará toda la pantalla de la computadora
-st.set_page_config(page_title="Sistema de Préstamos", page_icon="🏦", layout="wide")
-
-st.title("🏦 Sistema Automático de Préstamos")
-
-df_prestamos = cargar_bd()
-
-tab1, tab2, tab3, tab4 = st.tabs(["➕ Nuevo", "📋 Lista", "🔍 Detalles/Excel", "💵 Pagar"])
-
-# PESTAÑA 1: NUEVO
+# PESTAÑA 1: CREACIÓN
 with tab1:
-    st.subheader("Crear un nuevo préstamo")
-    nombre = st.text_input("👤 Nombre del cliente:")
-    cedula = st.text_input("🪪 Número de Cédula:")
-    col1, col2 = st.columns(2)
-    with col1:
-        capital = st.number_input("💵 Monto a prestar:", min_value=0.0, value=1000.0, step=100.0)
-        meses = st.number_input("📅 Plazo en meses:", min_value=1, value=12, step=1)
-    with col2:
-        tasa_anual = st.number_input("📈 Tasa de interés anual (%):", min_value=0.0, value=15.0, step=1.0)
+    st.subheader("Registrar nuevo crédito")
+    with st.form("form_nuevo"):
+        nombre = st.text_input("Nombre Completo:")
+        cedula = st.text_input("Cédula de Identidad:")
+        col_a, col_b, col_c = st.columns(3)
+        monto = col_a.number_input("Monto del Préstamo ($):", min_value=0.0, value=500.0)
+        plazo = col_b.number_input("Plazo (Meses):", min_value=1, value=12)
+        tasa = col_c.number_input("Interés Anual (%):", value=15.0)
         
-    if st.button("Guardar Préstamo", use_container_width=True):
-        if nombre.strip() and cedula.strip():
-            cuota = calcular_cuota(capital, meses, tasa_anual)
-            nuevo_registro = {
-                "ID": str(uuid.uuid4())[:8], "Fecha": datetime.now().strftime("%Y-%m-%d"),
-                "Nombre": nombre, "Cedula": cedula, "Monto_Inicial": capital, "Saldo_Restante": capital,
-                "Cuota_Mensual": round(cuota, 2), "Meses_Totales": meses, "Pagos_Realizados": 0,
-                "Estado": "ACTIVO", "Tasa": tasa_anual
-            }
-            df_nuevo = pd.DataFrame([nuevo_registro])
-            df_prestamos = pd.concat([df_prestamos, df_nuevo], ignore_index=True)
-            guardar_bd(df_prestamos)
-            st.success(f"¡Préstamo de {nombre} guardado!")
-            time.sleep(1.5)
-            st.rerun()
+        if st.form_submit_button("Sincronizar con Google Sheets"):
+            if nombre and cedula:
+                with st.spinner('Conectando con la nube...'):
+                    cuota = calcular_cuota(monto, plazo, tasa)
+                    nuevo_registro = pd.DataFrame([{
+                        "ID": str(uuid.uuid4())[:8], "Fecha": datetime.now().strftime("%Y-%m-%d"),
+                        "Nombre": nombre, "Cedula": str(cedula), "Monto_Inicial": monto, "Saldo_Restante": monto,
+                        "Cuota_Mensual": round(cuota, 2), "Meses_Totales": plazo, "Pagos_Realizados": 0, "Estado": "ACTIVO", "Tasa": tasa
+                    }])
+                    df_actualizado = pd.concat([df_prestamos, nuevo_registro], ignore_index=True)
+                    conn.update(data=df_actualizado)
+                    st.balloons()
+                    st.success(f"Préstamo para {nombre} registrado exitosamente.")
+                    time.sleep(2)
+                    st.rerun()
 
-# PESTAÑA 2: LISTA (AHORA MÁS ALTA)
+# PESTAÑA 2: LISTA GENERAL (VISTA PANORÁMICA)
 with tab2:
-    st.subheader("Base de datos de clientes")
+    st.subheader("Estado actual de la cartera")
     if not df_prestamos.empty:
-        activos_lista = df_prestamos[df_prestamos["Estado"] == "ACTIVO"]
-        pagados_lista = df_prestamos[df_prestamos["Estado"] == "PAGADO"]
-        
-        st.write(f"### 🟢 Préstamos Activos ({len(activos_lista)})")
-        if not activos_lista.empty:
-            # Agregamos height=400 para hacer la tabla gigante
-            st.dataframe(activos_lista[["Nombre", "Cedula", "Monto_Inicial", "Saldo_Restante", "Pagos_Realizados"]], use_container_width=True, height=400)
-            
-        st.write(f"### ⚪ Historial - Pagados ({len(pagados_lista)})")
-        if not pagados_lista.empty:
-            st.dataframe(pagados_lista[["Nombre", "Cedula", "Monto_Inicial", "Pagos_Realizados", "Estado"]], use_container_width=True, height=300)
+        activos = df_prestamos[df_prestamos["Estado"] == "ACTIVO"]
+        st.write(f"### 🟢 Préstamos Activos: {len(activos)}")
+        st.dataframe(activos, use_container_width=True, height=450)
     else:
-        st.info("La base de datos está vacía.")
+        st.info("No hay datos en la nube de Google.")
 
-# PESTAÑA 3: EXCEL CON IMÁGENES
-with tab3:
-    st.subheader("Ver tabla, exportar o eliminar")
-    if not df_prestamos.empty:
-        opciones_ver = df_prestamos["Nombre"].astype(str) + " - C.I: " + df_prestamos["Cedula"].astype(str) + " (ID: " + df_prestamos["ID"].astype(str) + ")"
-        seleccion_ver = st.selectbox("Selecciona un cliente:", opciones_ver, key="ver_cliente")
-        
-        if seleccion_ver:
-            id_ver = seleccion_ver.split("ID: ")[1].replace(")", "")
-            cliente_ver = df_prestamos[df_prestamos["ID"] == id_ver].iloc[0]
-            
-            df_tabla = generar_tabla_completa(cliente_ver["Monto_Inicial"], cliente_ver["Meses_Totales"], cliente_ver["Tasa"])
-            # Tabla más grande
-            st.dataframe(df_tabla.style.apply(resaltar_pagados, pagos_hechos=cliente_ver["Pagos_Realizados"], axis=1), use_container_width=True, height=500)
-            
-            buffer_excel = generar_excel(
-                cliente_ver["Nombre"], cliente_ver["Cedula"], cliente_ver["Monto_Inicial"], 
-                cliente_ver["Meses_Totales"], cliente_ver["Tasa"], df_tabla, id_ver
-            )
-            st.download_button(
-                label="📥 Descargar Excel (Tabla + Comprobantes)",
-                data=buffer_excel.getvalue(),
-                file_name=f"Prestamo_{cliente_ver['Nombre'].replace(' ', '_')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-            
-            st.divider() 
-            st.write("#### ⚠️ Zona de peligro")
-            if st.button("🗑️ Eliminar este préstamo permanentemente", use_container_width=True):
-                df_prestamos = df_prestamos[df_prestamos["ID"] != id_ver]
-                guardar_bd(df_prestamos)
-                st.success("El registro ha sido eliminado del sistema.")
-                time.sleep(1.5)
-                st.rerun()
-
-# PESTAÑA 4: PAGAR (MÚLTIPLES CUOTAS Y ANIMACIÓN)
+# PESTAÑA 4: COBRANZA CON DRIVE
 with tab4:
-    st.subheader("Registrar el pago")
-    activos = df_prestamos[df_prestamos["Estado"] == "ACTIVO"]
+    st.subheader("Módulo de Cobranza y Comprobantes")
+    activos_pago = df_prestamos[df_prestamos["Estado"] == "ACTIVO"]
     
-    if not activos.empty:
-        opciones_pago = activos["Nombre"].astype(str) + " - C.I: " + activos["Cedula"].astype(str) + " (ID: " + activos["ID"].astype(str) + ")"
-        seleccion_pago = st.selectbox("Selecciona el cliente:", opciones_pago, key="pagar_cliente")
+    if not activos_pago.empty:
+        seleccion = st.selectbox("Seleccionar Cliente:", activos_pago["Nombre"] + " (ID: " + activos_pago["ID"] + ")")
+        id_cliente = seleccion.split("ID: ")[1].replace(")", "")
+        cliente_info = activos_pago[activos_pago["ID"] == id_cliente].iloc[0]
         
-        if seleccion_pago:
-            id_seleccionado = seleccion_pago.split("ID: ")[1].replace(")", "")
-            cliente = activos[activos["ID"] == id_seleccionado].iloc[0]
-            
-            cuotas_restantes = int(cliente['Meses_Totales'] - cliente['Pagos_Realizados'])
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write(f"**Valor por cuota:** ${cliente['Cuota_Mensual']}")
-                st.write(f"**Progreso:** {cliente['Pagos_Realizados']} de {cliente['Meses_Totales']} pagados.")
-            with col2:
-                # Selector de cantidad de cuotas a pagar de golpe
-                cuotas_a_pagar = st.number_input("¿Cuántas cuotas va a pagar ahora?", min_value=1, max_value=cuotas_restantes, value=1, step=1)
-            
-            st.write(f"### Total a cobrar ahora: **${round(cliente['Cuota_Mensual'] * cuotas_a_pagar, 2)}**")
-            
-            comprobante = st.file_uploader("Sube la foto del comprobante (JPG o PNG):", type=["jpg", "jpeg", "png"])
-            
-            if st.button("✅ Confirmar Pago", use_container_width=True):
-                # 1. Iniciamos el proceso visual
-                with st.spinner('Procesando pago y guardando recibos...'):
-                    time.sleep(1) # Pequeña pausa para que se vea el proceso
-                    
-                    idx = df_prestamos[df_prestamos["ID"] == id_seleccionado].index[0]
-                    
-                    # Guardar el comprobante múltiples veces si pagó varias cuotas
-                    if comprobante is not None:
-                        ext = comprobante.name.split('.')[-1]
-                        for i in range(cuotas_a_pagar):
-                            num_cuota = cliente['Pagos_Realizados'] + i + 1
-                            nombre_archivo = f"Mes_{num_cuota}_{id_seleccionado}_recibo.{ext}"
-                            ruta_guardado = os.path.join(CARPETA_COMPROBANTES, nombre_archivo)
-                            with open(ruta_guardado, "wb") as f:
-                                f.write(comprobante.getbuffer())
-                    
-                    # Actualizar valores matemáticos
-                    df_prestamos.at[idx, "Pagos_Realizados"] += cuotas_a_pagar
-                    abono_capital = (cliente['Monto_Inicial'] / cliente['Meses_Totales']) * cuotas_a_pagar
-                    nuevo_saldo = df_prestamos.at[idx, "Saldo_Restante"] - abono_capital
-                    
-                    if nuevo_saldo <= 1 or df_prestamos.at[idx, "Pagos_Realizados"] == cliente['Meses_Totales']: 
-                        df_prestamos.at[idx, "Saldo_Restante"] = 0
-                        df_prestamos.at[idx, "Estado"] = "PAGADO"
-                    else:
-                        df_prestamos.at[idx, "Saldo_Restante"] = round(nuevo_saldo, 2)
-                    
-                    guardar_bd(df_prestamos)
+        c1, c2 = st.columns(2)
+        with c1:
+            st.info(f"Cuota mensual: ${cliente_info['Cuota_Mensual']}")
+            cuotas_pagar = st.number_input("Número de cuotas a pagar hoy:", min_value=1, max_value=int(cliente_info['Meses_Totales'] - cliente_info['Pagos_Realizados']), value=1)
+        with c2:
+            st.write(f"### Total a recibir: ${round(float(cliente_info['Cuota_Mensual']) * cuotas_pagar, 2)}")
+            comprobante = st.file_uploader("Subir foto del pago a Google Drive:", type=["jpg", "png"])
+
+        if st.button("✅ Confirmar Pago Permanente", use_container_width=True):
+            with st.spinner('Subiendo evidencia a Drive y actualizando Sheets...'):
+                # 1. Subir a Drive
+                if comprobante:
+                    subir_a_drive(comprobante.getvalue(), f"Recibo_{id_cliente}_{datetime.now().strftime('%Y%m%d')}.png")
                 
-                # 2. Mostramos los globos y el éxito
+                # 2. Actualizar Sheets
+                idx = df_prestamos[df_prestamos["ID"] == id_cliente].index[0]
+                df_prestamos.at[idx, "Pagos_Realizados"] += cuotas_pagar
+                abono = (float(cliente_info['Monto_Inicial']) / int(cliente_info['Meses_Totales'])) * cuotas_pagar
+                df_prestamos.at[idx, "Saldo_Restante"] = round(max(0, float(cliente_info['Saldo_Restante']) - abono), 2)
+                
+                if int(df_prestamos.at[idx, "Pagos_Realizados"]) >= int(cliente_info['Meses_Totales']):
+                    df_prestamos.at[idx, "Estado"] = "PAGADO"
+                
+                conn.update(data=df_prestamos)
                 st.balloons()
-                st.success(f"¡Éxito! Se registraron {cuotas_a_pagar} cuotas correctamente.")
-                
-                # 3. Esperamos 3 segundos antes de reiniciar la página
+                st.success("¡Pago registrado y asegurado en la nube!")
                 time.sleep(3)
                 st.rerun()
