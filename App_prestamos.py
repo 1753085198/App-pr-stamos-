@@ -12,12 +12,12 @@ from email import encoders
 from datetime import datetime
 import requests
 import base64
-from openpyxl.styles import PatternFill, Font
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 
 # 1. CONFIGURACIÓN INICIAL
 st.set_page_config(page_title="SISTEMA FINANCIERO MASTER", page_icon="🏦", layout="wide")
 
-# 2. CSS PARA INTERFAZ GIGANTE (PRO)
+# 2. CSS PARA INTERFAZ GIGANTE
 st.markdown("""
     <style>
     .stMarkdown p, label, .stNumberInput label, .stTextInput label { font-size: 26px !important; font-weight: 700 !important; }
@@ -32,7 +32,7 @@ st.markdown("""
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- ESTADOS GLOBALES (LLAVES DINÁMICAS) ---
+# --- ESTADOS GLOBALES ---
 if 'pago_key' not in st.session_state: st.session_state.pago_key = 0
 if 'id_abierto' not in st.session_state: st.session_state.id_abierto = None
 
@@ -54,21 +54,77 @@ def subir_img(archivo):
 def generar_excel_grupal(df, titulo):
     out = io.BytesIO()
     with pd.ExcelWriter(out, engine='openpyxl') as writer:
-        ws = writer.book.create_sheet("GENERAL", 0)
-        f_v, f_r = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid"), PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-        ws.append([f"REPORTE GENERAL - {titulo}"]); ws.append(["Nombre", "Cédula", "Monto Total", "Estado"])
+        ws = writer.book.create_sheet("REPORTE_GENERAL", 0)
+        
+        # Estilos de Excel Pro
+        header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+        header_font = Font(color="FFFFFF", bold=True, size=12)
+        v_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+        r_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+        center_align = Alignment(horizontal="center", vertical="center")
+        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+
+        label_monto = "DEUDA PENDIENTE" if "PRÉSTAMOS" in titulo.upper() else "TOTAL APORTADO"
+        
+        # Título del Reporte
+        ws.merge_cells("A1:D1")
+        ws["A1"] = f"UDLA ECONOMÍA - REPORTE DE {titulo}"
+        ws["A1"].font = Font(bold=True, size=14)
+        ws["A1"].alignment = center_align
+
+        # Encabezados
+        headers = ["NOMBRE COMPLETO", "CÉDULA", label_monto, "ESTADO ACTUAL"]
+        ws.append(headers)
+        for col_num, cell in enumerate(ws[2], 1):
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = center_align
+            cell.border = thin_border
+
+        # Datos
         for _, row in df.iterrows():
             m = float(row.get('Saldo_Total_Aportado', row.get('Saldo_Restante', 0)))
-            ws.append([row['Nombre'], row['Cedula'], m, "AL DÍA" if m > 0 else "PENDIENTE"])
-            for col in range(1, 5): ws.cell(row=ws.max_row, column=col).fill = f_v if m > 0 else f_r
+            if "PRÉSTAMOS" in titulo.upper():
+                estado = row.get("Estado", "ACTIVO")
+                color = v_fill if estado == "PAGADO" else r_fill
+            else:
+                estado = "AL DÍA" if m > 0 else "PENDIENTE"
+                color = v_fill if m > 0 else r_fill
+            
+            ws.append([row['Nombre'], row['Cedula'], m, estado])
+            for cell in ws[ws.max_row]:
+                cell.fill = color
+                cell.alignment = center_align
+                cell.border = thin_border
+
+        # Auto-ajustar columnas
+        for col in ws.columns:
+            max_length = max(len(str(cell.value)) for cell in col)
+            ws.column_dimensions[col[0].column_letter].width = max_length + 5
+            
     return out.getvalue()
 
 def generar_excel_personal(row, historial, tipo):
     out = io.BytesIO()
     with pd.ExcelWriter(out, engine='openpyxl') as writer:
-        ws = writer.book.create_sheet("HISTORIAL", 0)
-        ws.append([f"ESTADO DE {tipo} - {row['Nombre']}"]); ws.append(["Fecha", "Monto", "Recibo"])
+        ws = writer.book.create_sheet("ESTADO_CUENTA", 0)
+        center_align = Alignment(horizontal="center")
+        header_font = Font(bold=True, size=12)
+
+        # Cabecera UDLA
+        ws.merge_cells("A1:C1")
+        ws["A1"] = f"UDLA ECONOMÍA - ESTADO DE CUENTA"
+        ws["A1"].font = Font(bold=True, size=14)
+        ws["A1"].alignment = center_align
+
+        ws.append([f"MODO: {tipo}"]); ws.append([f"SOCIO/PRESTAMISTA: {row['Nombre']}"]); ws.append([f"CÉDULA: {row['Cedula']}"])
+        ws.append([""]); ws.append(["FECHA DE MOVIMIENTO", "VALOR ($)", "LINK DE RESPALDO"])
         
+        # Formatear encabezado de tabla
+        for cell in ws[6]:
+            cell.font = header_font
+            cell.alignment = center_align
+
         p_fil = pd.DataFrame()
         if not historial.empty:
             col_id = 'ID_Prestamo' if 'ID_Prestamo' in historial.columns else 'ID_Socio'
@@ -81,35 +137,41 @@ def generar_excel_personal(row, historial, tipo):
             c = p.get('Comprobante', p.get('URL', p.get('URL_Comprobante', 'N/A')))
             ws.append([f, m, c])
             
-        ws.append([""]); ws.append(["SALDO ACTUAL/DEUDA:", row.get('Saldo_Total_Aportado', row.get('Saldo_Restante', 0))])
+        ws.append([""]); ws.append(["", "TOTAL FINAL:", row.get('Saldo_Total_Aportado', row.get('Saldo_Restante', 0))])
+        ws.cell(row=ws.max_row, column=2).font = header_font
+        ws.cell(row=ws.max_row, column=3).font = header_font
+
+        for col in ws.columns:
+            ws.column_dimensions[col[0].column_letter].width = 30
+            
     return out.getvalue()
 
 def enviar_mail(dest, nom, exc, url, tipo):
     try:
-        msg = MIMEMultipart(); msg['From'] = st.secrets["EMAIL_USER"]; msg['To'] = dest; msg['Subject'] = f"✅ Comprobante {tipo} - {nom}"
-        msg.attach(MIMEText(f"Hola {nom}, se registró tu movimiento financiero.\n\nRecibo: {url}", 'plain'))
+        msg = MIMEMultipart(); msg['From'] = st.secrets["EMAIL_USER"]; msg['To'] = dest; msg['Subject'] = f"✅ Reporte {tipo} - {nom}"
+        msg.attach(MIMEText(f"Hola {nom}, se adjunta tu estado de cuenta actualizado de UDLA Economía.\n\nRecibo visual: {url}", 'plain'))
         p = MIMEBase('application', 'octet-stream'); p.set_payload(exc); encoders.encode_base64(p)
-        p.add_header('Content-Disposition', f"attachment; filename=Recibo_{tipo}.xlsx"); msg.attach(p)
+        p.add_header('Content-Disposition', f"attachment; filename=Reporte_UDLA_{tipo}.xlsx"); msg.attach(p)
         s = smtplib.SMTP('smtp.gmail.com', 587); s.starttls(); s.login(st.secrets["EMAIL_USER"], st.secrets["EMAIL_PASS"]); s.send_message(msg); s.quit()
     except: pass
 
 # --- NAVEGACIÓN ---
 with st.sidebar:
-    st.markdown("# 🏦 SISTEMA FINANCIERO")
-    sec = st.radio("MODOS OPERATIVOS:", ["💰 PRÉSTAMOS", "🤝 COOPERATIVA", "🚑 AYUDAS ECON."], index=0)
+    st.markdown("# 🏦 PANEL FINANCIERO")
+    sec = st.radio("SECCIONES ACTIVAS:", ["💰 PRÉSTAMOS", "🤝 COOPERATIVA", "🚑 AYUDAS ECON."], index=0)
 
 # --- 1. MODO PRÉSTAMOS ---
 if sec == "💰 PRÉSTAMOS":
     st.title("💰 GESTIÓN DE PRÉSTAMOS")
     df_p, df_h = cargar("Prestamos"), cargar("Pagos")
-    if not df_p.empty: st.download_button("📊 EXCEL GENERAL PRÉSTAMOS", data=generar_excel_grupal(df_p, "PRESTAMOS"), file_name="Reporte_Prestamos.xlsx", use_container_width=True)
+    if not df_p.empty: st.download_button("📊 EXCEL GENERAL PRÉSTAMOS", data=generar_excel_grupal(df_p, "PRÉSTAMOS"), file_name="Reporte_UDLA_Prestamos.xlsx", use_container_width=True)
     
     if st.button("👤 NUEVO PRÉSTAMO", key="btn_nuevo_p"): st.session_state.show_form_p = not st.session_state.get('show_form_p', False)
     if st.session_state.get('show_form_p'):
         with st.form("form_p"):
             n, c, e = st.text_input("Nombre:"), st.text_input("Cédula:"), st.text_input("Email:")
             m, t, p = st.number_input("Monto:", min_value=1.0), st.number_input("Tasa %:", value=15.0), st.number_input("Meses:", value=12)
-            if st.form_submit_button("💾 GUARDAR PRÉSTAMO"):
+            if st.form_submit_button("💾 GUARDAR"):
                 i = (t/100)/12; cuo = m * (i*(1+i)**p)/((1+i)**p-1) if i>0 else m/p
                 new = pd.DataFrame([{"ID":str(uuid.uuid4())[:8], "Nombre":n, "Cedula":c, "Email":e, "Monto_Inicial":m, "Saldo_Restante":round(cuo*p,2), "Cuota_Mensual":round(cuo,2), "Meses_Totales":p, "Pagos_Realizados":0, "Estado":"ACTIVO"}])
                 conn.update(worksheet="Prestamos", data=pd.concat([df_p, new], ignore_index=True))
@@ -120,12 +182,12 @@ if sec == "💰 PRÉSTAMOS":
     if bq_p and not act_p.empty: act_p = act_p[act_p['Nombre'].str.contains(bq_p, case=False)]
 
     for idx, row in act_p.iterrows():
-        with st.expander(f"👤 {row['Nombre'].upper()} | SALDO PENDIENTE: ${row['Saldo_Restante']}", expanded=(st.session_state.id_abierto == row['ID'])):
+        with st.expander(f"👤 {row['Nombre'].upper()} | SALDO: ${row['Saldo_Restante']}", expanded=(st.session_state.id_abierto == row['ID'])):
             c1, c2 = st.columns(2)
             with c1: 
-                st.write(f"**CUOTA:** ${row['Cuota_Mensual']} | **PAGOS:** {row['Pagos_Realizados']}/{row['Meses_Totales']}")
+                st.write(f"**CUOTA MENSUAL:** ${row['Cuota_Mensual']} | **PROGRESO:** {row['Pagos_Realizados']}/{row['Meses_Totales']}")
                 with st.form(key=f"fp_{row['ID']}"):
-                    ft = st.file_uploader("📸 RECIBO:", key=f"ip_{row['ID']}_{st.session_state.pago_key}")
+                    ft = st.file_uploader("📸 SUBIR FOTO RECIBO:", key=f"ip_{row['ID']}_{st.session_state.pago_key}")
                     if st.form_submit_button("✅ CONFIRMAR COBRO"):
                         if ft:
                             url = subir_img(ft.getvalue())
@@ -136,13 +198,12 @@ if sec == "💰 PRÉSTAMOS":
                             if df_p.at[idx, "Pagos_Realizados"] >= row["Meses_Totales"]: df_p.at[idx, "Estado"] = "PAGADO"
                             conn.update(worksheet="Prestamos", data=df_p)
                             if row.get('Email'): enviar_mail(row['Email'], row['Nombre'], generar_excel_personal(df_p.loc[idx], pd.concat([df_h, new_h]), "PRÉSTAMO"), url, "Prestamos")
-                            st.session_state.pago_key += 1
-                            st.rerun()
+                            st.session_state.pago_key += 1; st.rerun()
             with c2: 
-                st.download_button(f"📊 EXCEL {row['Nombre'].split()[0]}", data=generar_excel_personal(row, df_h, "PRÉSTAMO"), file_name=f"Historial_{row['Nombre']}.xlsx", key=f"dlp_{row['ID']}")
-            with st.popover("🗑️ ELIMINAR PRÉSTAMO"):
-                st.warning(f"¿Estás seguro que quieres borrar a {row['Nombre']}?")
-                if st.button("SÍ, BORRAR DEFINITIVAMENTE", key=f"del_p_{row['ID']}"):
+                st.download_button(f"📊 EXCEL {row['Nombre'].split()[0]}", data=generar_excel_personal(row, df_h, "PRÉSTAMO"), file_name=f"Deuda_{row['Nombre']}.xlsx", key=f"dlp_{row['ID']}")
+            with st.popover("🗑️ ELIMINAR"):
+                st.warning(f"¿Borrar préstamo de {row['Nombre']}?")
+                if st.button("CONFIRMAR ELIMINACIÓN", key=f"del_p_{row['ID']}"):
                     df_p = df_p[df_p["ID"] != row["ID"]]; conn.update(worksheet="Prestamos", data=df_p); st.rerun()
 
 # --- 2. MODO COOPERATIVA ---
@@ -150,13 +211,13 @@ elif sec == "🤝 COOPERATIVA":
     st.title("🤝 COOPERATIVA")
     df_s, df_ph = cargar("Cooperativa"), cargar("Pagos_Coop")
     v_x = st.number_input("💵 VALOR CUOTA FIJA:", value=10.0)
-    if not df_s.empty: st.download_button("📊 EXCEL GENERAL COOP", data=generar_excel_grupal(df_s, "COOP"), file_name="Reporte_Coop.xlsx", use_container_width=True)
+    if not df_s.empty: st.download_button("📊 EXCEL GENERAL COOP", data=generar_excel_grupal(df_s, "COOPERATIVA"), file_name="Reporte_UDLA_Coop.xlsx", use_container_width=True)
     
     if st.button("👤 NUEVO SOCIO", key="btn_nuevo_c"): st.session_state.show_form_c = not st.session_state.get('show_form_c', False)
     if st.session_state.get('show_form_c'):
         with st.form("form_c"):
             n, c, e = st.text_input("Nombre:"), st.text_input("Cédula:"), st.text_input("Email:")
-            if st.form_submit_button("💾 AÑADIR SOCIO"):
+            if st.form_submit_button("💾 AÑADIR"):
                 new = pd.DataFrame([{"ID":str(uuid.uuid4())[:5], "Nombre":n, "Cedula":c, "Email":e, "Saldo_Total_Aportado":0}])
                 conn.update(worksheet="Cooperativa", data=pd.concat([df_s, new], ignore_index=True))
                 st.session_state.show_form_c = False; st.rerun()
@@ -170,9 +231,8 @@ elif sec == "🤝 COOPERATIVA":
             c1, c2 = st.columns(2)
             with c1:
                 with st.form(key=f"fc_{row['ID']}"):
-                    m = st.number_input("Monto:", value=v_x)
-                    ft = st.file_uploader("📸 RECIBO:", key=f"ic_{row['ID']}_{st.session_state.pago_key}")
-                    if st.form_submit_button("✅ REGISTRAR PAGO"):
+                    m = st.number_input("Monto:", value=v_x); ft = st.file_uploader("📸 FOTO RECIBO:", key=f"ic_{row['ID']}_{st.session_state.pago_key}")
+                    if st.form_submit_button("✅ REGISTRAR"):
                         if ft:
                             url = subir_img(ft.getvalue())
                             st.session_state.id_abierto = row['ID']
@@ -180,14 +240,12 @@ elif sec == "🤝 COOPERATIVA":
                             conn.update(worksheet="Pagos_Coop", data=pd.concat([df_ph, new_h], ignore_index=True))
                             df_s.at[idx, "Saldo_Total_Aportado"] = float(row['Saldo_Total_Aportado']) + m
                             conn.update(worksheet="Cooperativa", data=df_s)
-                            if row.get('Email'): enviar_mail(row['Email'], row['Nombre'], generar_excel_personal(df_s.loc[idx], pd.concat([df_ph, new_h]), "COOP"), url, "Cooperativa")
-                            st.session_state.pago_key += 1
-                            st.rerun()
-            with c2: 
-                st.download_button(f"📊 EXCEL {row['Nombre'].split()[0]}", data=generar_excel_personal(row, df_ph, "COOP"), file_name=f"Historial_{row['Nombre']}.xlsx", key=f"dlc_{row['ID']}")
-            with st.popover("🗑️ ELIMINAR SOCIO"):
-                st.warning(f"¿Estás seguro que quieres borrar a {row['Nombre']}?")
-                if st.button("SÍ, BORRAR DEFINITIVAMENTE", key=f"del_c_{row['ID']}"):
+                            if row.get('Email'): enviar_mail(row['Email'], row['Nombre'], generar_excel_personal(df_s.loc[idx], pd.concat([df_ph, new_h]), "COOPERATIVA"), url, "Cooperativa")
+                            st.session_state.pago_key += 1; st.rerun()
+            with c2: st.download_button(f"📊 EXCEL {row['Nombre'].split()[0]}", data=generar_excel_personal(row, df_ph, "COOPERATIVA"), file_name=f"Historial_{row['Nombre']}.xlsx", key=f"dlc_{row['ID']}")
+            with st.popover("🗑️ ELIMINAR"):
+                st.warning(f"¿Borrar socio {row['Nombre']}?")
+                if st.button("CONFIRMAR", key=f"del_c_{row['ID']}"):
                     df_s = df_s[df_s["ID"] != row["ID"]]; conn.update(worksheet="Cooperativa", data=df_s); st.rerun()
 
 # --- 3. MODO AYUDAS ECONÓMICAS ---
@@ -198,14 +256,13 @@ elif sec == "🚑 AYUDAS ECON.":
     
     col_t1, col_t2 = st.columns([2, 1])
     with col_t1:
-        if not df_a.empty: st.download_button("📊 EXCEL GRUPAL AYUDAS", data=generar_excel_grupal(df_a, "AYUDAS"), file_name="Reporte_Ayudas.xlsx", use_container_width=True)
+        if not df_a.empty: st.download_button("📊 EXCEL GENERAL AYUDAS", data=generar_excel_grupal(df_a, "AYUDAS ECONÓMICAS"), file_name="Reporte_UDLA_Ayudas.xlsx", use_container_width=True)
     with col_t2:
         if st.button("🔴 GASTO CAJA", type="secondary"): st.session_state.eg_ay = not st.session_state.get('eg_ay', False)
 
     if st.session_state.get('eg_ay'):
         with st.form("eg_ay"):
-            det_e = st.text_input("Detalle del Gasto:")
-            mon_e = st.number_input("Monto a Retirar:", min_value=1.0)
+            det_e = st.text_input("Detalle del Gasto:"); mon_e = st.number_input("Monto:", min_value=1.0)
             if st.form_submit_button("⚠️ CONFIRMAR RETIRO"):
                 st.success(f"Gasto de ${mon_e} guardado."); st.session_state.eg_ay = False; time.sleep(1); st.rerun()
 
@@ -223,13 +280,12 @@ elif sec == "🚑 AYUDAS ECON.":
     if bq_a and not act_a.empty: act_a = act_a[act_a['Nombre'].str.contains(bq_a, case=False)]
 
     for idx, row in act_a.iterrows():
-        with st.expander(f"👤 {row['Nombre'].upper()} | TOTAL: ${row['Saldo_Total_Aportado']}", expanded=(st.session_state.id_abierto == row['ID'])):
+        with st.expander(f"👤 {row['Nombre'].upper()} | ACUMULADO: ${row['Saldo_Total_Aportado']}", expanded=(st.session_state.id_abierto == row['ID'])):
             c1, c2 = st.columns(2)
             with c1:
                 with st.form(key=f"fa_{row['ID']}"):
-                    m = st.number_input("Monto:", value=v_y)
-                    ft = st.file_uploader("📸 RECIBO:", key=f"ia_{row['ID']}_{st.session_state.pago_key}")
-                    if st.form_submit_button("✅ GUARDAR APORTE"):
+                    m = st.number_input("Monto:", value=v_y); ft = st.file_uploader("📸 FOTO RECIBO:", key=f"ia_{row['ID']}_{st.session_state.pago_key}")
+                    if st.form_submit_button("✅ GUARDAR"):
                         if ft:
                             url = subir_img(ft.getvalue())
                             st.session_state.id_abierto = row['ID']
@@ -238,11 +294,8 @@ elif sec == "🚑 AYUDAS ECON.":
                             df_a.at[idx, "Saldo_Total_Aportado"] = float(row['Saldo_Total_Aportado']) + m
                             conn.update(worksheet="Ayudas_Listado", data=df_a)
                             if row.get('Email'): enviar_mail(row['Email'], row['Nombre'], generar_excel_personal(df_a.loc[idx], pd.concat([df_ah, new_h]), "AYUDAS"), url, "Ayudas")
-                            st.session_state.pago_key += 1
-                            st.rerun()
-            with c2: 
-                st.download_button(f"📊 EXCEL {row['Nombre'].split()[0]}", data=generar_excel_personal(row, df_ah, "AYUDAS"), file_name=f"Ayuda_{row['Nombre']}.xlsx", key=f"dla_{row['ID']}")
-            with st.popover("🗑️ ELIMINAR DE LISTA"):
-                st.warning(f"¿Estás seguro que quieres borrar a {row['Nombre']}?")
-                if st.button("SÍ, BORRAR DEFINITIVAMENTE", key=f"del_a_{row['ID']}"):
+                            st.session_state.pago_key += 1; st.rerun()
+            with c2: st.download_button(f"📊 EXCEL {row['Nombre'].split()[0]}", data=generar_excel_personal(row, df_ah, "AYUDAS"), file_name=f"Ayuda_{row['Nombre']}.xlsx", key=f"dla_{row['ID']}")
+            with st.popover("🗑️ BORRAR"):
+                if st.button("CONFIRMAR BORRADO", key=f"del_a_{row['ID']}"):
                     df_a = df_a[df_a["ID"] != row["ID"]]; conn.update(worksheet="Ayudas_Listado", data=df_a); st.rerun()
