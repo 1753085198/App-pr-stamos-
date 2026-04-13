@@ -97,10 +97,11 @@ def generar_excel_grupal(df, titulo):
                 cell.alignment = center_align
                 cell.border = thin_border
 
-        # Auto-ajustar columnas
-        for col in ws.columns:
-            max_length = max(len(str(cell.value)) for cell in col)
-            ws.column_dimensions[col[0].column_letter].width = max_length + 5
+        # BLINDAJE: Tamaños fijos para evitar errores de celdas fusionadas
+        ws.column_dimensions['A'].width = 40
+        ws.column_dimensions['B'].width = 20
+        ws.column_dimensions['C'].width = 25
+        ws.column_dimensions['D'].width = 25
             
     return out.getvalue()
 
@@ -141,8 +142,10 @@ def generar_excel_personal(row, historial, tipo):
         ws.cell(row=ws.max_row, column=2).font = header_font
         ws.cell(row=ws.max_row, column=3).font = header_font
 
-        for col in ws.columns:
-            ws.column_dimensions[col[0].column_letter].width = 30
+        # BLINDAJE: Tamaños fijos para el personal
+        ws.column_dimensions['A'].width = 25
+        ws.column_dimensions['B'].width = 15
+        ws.column_dimensions['C'].width = 50
             
     return out.getvalue()
 
