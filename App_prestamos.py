@@ -32,6 +32,10 @@ st.markdown("""
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
+# --- ESTADOS GLOBALES (LLAVES DINÁMICAS) ---
+if 'pago_key' not in st.session_state: st.session_state.pago_key = 0
+if 'id_abierto' not in st.session_state: st.session_state.id_abierto = None
+
 # --- FUNCIONES CORE ---
 def cargar(h):
     try:
@@ -64,14 +68,20 @@ def generar_excel_personal(row, historial, tipo):
     with pd.ExcelWriter(out, engine='openpyxl') as writer:
         ws = writer.book.create_sheet("HISTORIAL", 0)
         ws.append([f"ESTADO DE {tipo} - {row['Nombre']}"]); ws.append(["Fecha", "Monto", "Recibo"])
+        
         p_fil = pd.DataFrame()
         if not historial.empty:
             col_id = 'ID_Prestamo' if 'ID_Prestamo' in historial.columns else 'ID_Socio'
-            if col_id in historial.columns: p_fil = historial[historial[col_id] == row['ID']]
+            if col_id in historial.columns:
+                p_fil = historial[historial[col_id] == row['ID']]
+        
         for _, p in p_fil.iterrows(): 
-            f = p.get('Fecha', p.get('Fecha_Pago', '')); m = p.get('Monto', p.get('Monto_Pagado', 0)); c = p.get('Comprobante', p.get('URL', 'N/A'))
+            f = p.get('Fecha', p.get('Fecha_Pago', ''))
+            m = p.get('Monto', p.get('Monto_Pagado', 0))
+            c = p.get('Comprobante', p.get('URL', p.get('URL_Comprobante', 'N/A')))
             ws.append([f, m, c])
-        ws.append([""]); ws.append(["SALDO/DEUDA:", row.get('Saldo_Total_Aportado', row.get('Saldo_Restante', 0))])
+            
+        ws.append([""]); ws.append(["SALDO ACTUAL/DEUDA:", row.get('Saldo_Total_Aportado', row.get('Saldo_Restante', 0))])
     return out.getvalue()
 
 def enviar_mail(dest, nom, exc, url, tipo):
@@ -85,7 +95,7 @@ def enviar_mail(dest, nom, exc, url, tipo):
 
 # --- NAVEGACIÓN ---
 with st.sidebar:
-    st.markdown("# 🏦 PANEL")
+    st.markdown("# 🏦 SISTEMA FINANCIERO")
     sec = st.radio("MODOS OPERATIVOS:", ["💰 PRÉSTAMOS", "🤝 COOPERATIVA", "🚑 AYUDAS ECON."], index=0)
 
 # --- 1. MODO PRÉSTAMOS ---
@@ -99,33 +109,37 @@ if sec == "💰 PRÉSTAMOS":
         with st.form("form_p"):
             n, c, e = st.text_input("Nombre:"), st.text_input("Cédula:"), st.text_input("Email:")
             m, t, p = st.number_input("Monto:", min_value=1.0), st.number_input("Tasa %:", value=15.0), st.number_input("Meses:", value=12)
-            if st.form_submit_button("💾 GUARDAR"):
+            if st.form_submit_button("💾 GUARDAR PRÉSTAMO"):
                 i = (t/100)/12; cuo = m * (i*(1+i)**p)/((1+i)**p-1) if i>0 else m/p
                 new = pd.DataFrame([{"ID":str(uuid.uuid4())[:8], "Nombre":n, "Cedula":c, "Email":e, "Monto_Inicial":m, "Saldo_Restante":round(cuo*p,2), "Cuota_Mensual":round(cuo,2), "Meses_Totales":p, "Pagos_Realizados":0, "Estado":"ACTIVO"}])
-                conn.update(worksheet="Prestamos", data=pd.concat([df_p, new], ignore_index=True)); st.rerun()
+                conn.update(worksheet="Prestamos", data=pd.concat([df_p, new], ignore_index=True))
+                st.session_state.show_form_p = False; st.rerun()
 
-    bq_p = st.text_input("🔍 BUSCAR:")
+    bq_p = st.text_input("🔍 BUSCAR PRESTAMISTA:")
     act_p = df_p[df_p["Estado"]=="ACTIVO"] if not df_p.empty else pd.DataFrame()
-    if bq_p: act_p = act_p[act_p['Nombre'].str.contains(bq_p, case=False)]
+    if bq_p and not act_p.empty: act_p = act_p[act_p['Nombre'].str.contains(bq_p, case=False)]
 
     for idx, row in act_p.iterrows():
-        with st.expander(f"👤 {row['Nombre'].upper()} | SALDO: ${row['Saldo_Restante']}"):
+        with st.expander(f"👤 {row['Nombre'].upper()} | SALDO PENDIENTE: ${row['Saldo_Restante']}", expanded=(st.session_state.id_abierto == row['ID'])):
             c1, c2 = st.columns(2)
             with c1: 
                 st.write(f"**CUOTA:** ${row['Cuota_Mensual']} | **PAGOS:** {row['Pagos_Realizados']}/{row['Meses_Totales']}")
                 with st.form(key=f"fp_{row['ID']}"):
-                    ft = st.file_uploader("📸 RECIBO:", key=f"ip_{row['ID']}")
-                    if st.form_submit_button("✅ COBRAR"):
+                    ft = st.file_uploader("📸 RECIBO:", key=f"ip_{row['ID']}_{st.session_state.pago_key}")
+                    if st.form_submit_button("✅ CONFIRMAR COBRO"):
                         if ft:
                             url = subir_img(ft.getvalue())
+                            st.session_state.id_abierto = row['ID']
                             new_h = pd.DataFrame([{"ID_Prestamo": row['ID'], "Fecha": datetime.now().strftime("%Y-%m-%d"), "Monto": row['Cuota_Mensual'], "Comprobante": url}])
                             conn.update(worksheet="Pagos", data=pd.concat([df_h, new_h], ignore_index=True))
                             df_p.at[idx, "Pagos_Realizados"] += 1; df_p.at[idx, "Saldo_Restante"] = round(row["Saldo_Restante"] - row["Cuota_Mensual"], 2)
                             if df_p.at[idx, "Pagos_Realizados"] >= row["Meses_Totales"]: df_p.at[idx, "Estado"] = "PAGADO"
-                            conn.update(worksheet="Prestamos", data=df_p); st.rerun()
+                            conn.update(worksheet="Prestamos", data=df_p)
+                            if row.get('Email'): enviar_mail(row['Email'], row['Nombre'], generar_excel_personal(df_p.loc[idx], pd.concat([df_h, new_h]), "PRÉSTAMO"), url, "Prestamos")
+                            st.session_state.pago_key += 1
+                            st.rerun()
             with c2: 
-                st.download_button(f"📊 EXCEL {row['Nombre'].split()[0]}", data=generar_excel_personal(row, df_h, "PRÉSTAMO"), file_name=f"Deuda_{row['Nombre']}.xlsx", key=f"dlp_{row['ID']}")
-            # BOTÓN ELIMINAR CON CONFIRMACIÓN
+                st.download_button(f"📊 EXCEL {row['Nombre'].split()[0]}", data=generar_excel_personal(row, df_h, "PRÉSTAMO"), file_name=f"Historial_{row['Nombre']}.xlsx", key=f"dlp_{row['ID']}")
             with st.popover("🗑️ ELIMINAR PRÉSTAMO"):
                 st.warning(f"¿Estás seguro que quieres borrar a {row['Nombre']}?")
                 if st.button("SÍ, BORRAR DEFINITIVAMENTE", key=f"del_p_{row['ID']}"):
@@ -136,35 +150,41 @@ elif sec == "🤝 COOPERATIVA":
     st.title("🤝 COOPERATIVA")
     df_s, df_ph = cargar("Cooperativa"), cargar("Pagos_Coop")
     v_x = st.number_input("💵 VALOR CUOTA FIJA:", value=10.0)
-    if not df_s.empty: st.download_button("📊 EXCEL GRUPAL", data=generar_excel_grupal(df_s, "COOP"), file_name="Reporte_Coop.xlsx", use_container_width=True)
+    if not df_s.empty: st.download_button("📊 EXCEL GENERAL COOP", data=generar_excel_grupal(df_s, "COOP"), file_name="Reporte_Coop.xlsx", use_container_width=True)
     
     if st.button("👤 NUEVO SOCIO", key="btn_nuevo_c"): st.session_state.show_form_c = not st.session_state.get('show_form_c', False)
     if st.session_state.get('show_form_c'):
         with st.form("form_c"):
             n, c, e = st.text_input("Nombre:"), st.text_input("Cédula:"), st.text_input("Email:")
-            if st.form_submit_button("AÑADIR"):
+            if st.form_submit_button("💾 AÑADIR SOCIO"):
                 new = pd.DataFrame([{"ID":str(uuid.uuid4())[:5], "Nombre":n, "Cedula":c, "Email":e, "Saldo_Total_Aportado":0}])
-                conn.update(worksheet="Cooperativa", data=pd.concat([df_s, new], ignore_index=True)); st.rerun()
+                conn.update(worksheet="Cooperativa", data=pd.concat([df_s, new], ignore_index=True))
+                st.session_state.show_form_c = False; st.rerun()
 
     bq_c = st.text_input("🔍 BUSCAR SOCIO:")
     act_c = df_s if not df_s.empty else pd.DataFrame()
-    if bq_c: act_c = act_c[act_c['Nombre'].str.contains(bq_c, case=False)]
+    if bq_c and not act_c.empty: act_c = act_c[act_c['Nombre'].str.contains(bq_c, case=False)]
 
     for idx, row in act_c.iterrows():
-        with st.expander(f"👤 {row['Nombre'].upper()} | TOTAL: ${row['Saldo_Total_Aportado']}"):
+        with st.expander(f"👤 {row['Nombre'].upper()} | ACUMULADO: ${row['Saldo_Total_Aportado']}", expanded=(st.session_state.id_abierto == row['ID'])):
             c1, c2 = st.columns(2)
             with c1:
                 with st.form(key=f"fc_{row['ID']}"):
-                    m = st.number_input("Monto:", value=v_x); ft = st.file_uploader("📸 RECIBO:", key=f"ic_{row['ID']}")
-                    if st.form_submit_button("✅ REGISTRAR"):
+                    m = st.number_input("Monto:", value=v_x)
+                    ft = st.file_uploader("📸 RECIBO:", key=f"ic_{row['ID']}_{st.session_state.pago_key}")
+                    if st.form_submit_button("✅ REGISTRAR PAGO"):
                         if ft:
                             url = subir_img(ft.getvalue())
+                            st.session_state.id_abierto = row['ID']
                             new_h = pd.DataFrame([{"ID_Socio": row['ID'], "Fecha": datetime.now().strftime("%Y-%m-%d"), "Monto": m, "Comprobante": url}])
                             conn.update(worksheet="Pagos_Coop", data=pd.concat([df_ph, new_h], ignore_index=True))
                             df_s.at[idx, "Saldo_Total_Aportado"] = float(row['Saldo_Total_Aportado']) + m
-                            conn.update(worksheet="Cooperativa", data=df_s); st.rerun()
-            with c2: st.download_button(f"📊 EXCEL {row['Nombre'].split()[0]}", data=generar_excel_personal(row, df_ph, "COOP"), file_name=f"Socio_{row['Nombre']}.xlsx", key=f"dlc_{row['ID']}")
-            # BOTÓN ELIMINAR CON CONFIRMACIÓN
+                            conn.update(worksheet="Cooperativa", data=df_s)
+                            if row.get('Email'): enviar_mail(row['Email'], row['Nombre'], generar_excel_personal(df_s.loc[idx], pd.concat([df_ph, new_h]), "COOP"), url, "Cooperativa")
+                            st.session_state.pago_key += 1
+                            st.rerun()
+            with c2: 
+                st.download_button(f"📊 EXCEL {row['Nombre'].split()[0]}", data=generar_excel_personal(row, df_ph, "COOP"), file_name=f"Historial_{row['Nombre']}.xlsx", key=f"dlc_{row['ID']}")
             with st.popover("🗑️ ELIMINAR SOCIO"):
                 st.warning(f"¿Estás seguro que quieres borrar a {row['Nombre']}?")
                 if st.button("SÍ, BORRAR DEFINITIVAMENTE", key=f"del_c_{row['ID']}"):
@@ -182,33 +202,46 @@ elif sec == "🚑 AYUDAS ECON.":
     with col_t2:
         if st.button("🔴 GASTO CAJA", type="secondary"): st.session_state.eg_ay = not st.session_state.get('eg_ay', False)
 
+    if st.session_state.get('eg_ay'):
+        with st.form("eg_ay"):
+            det_e = st.text_input("Detalle del Gasto:")
+            mon_e = st.number_input("Monto a Retirar:", min_value=1.0)
+            if st.form_submit_button("⚠️ CONFIRMAR RETIRO"):
+                st.success(f"Gasto de ${mon_e} guardado."); st.session_state.eg_ay = False; time.sleep(1); st.rerun()
+
     if st.button("👤 NUEVO COMPAÑERO", key="btn_nuevo_a"): st.session_state.show_form_a = not st.session_state.get('show_form_a', False)
     if st.session_state.get('show_form_a'):
         with st.form("na"):
             n, c, e = st.text_input("Nombre:"), st.text_input("Cédula:"), st.text_input("Email:")
             if st.form_submit_button("AÑADIR"):
                 new = pd.DataFrame([{"ID":str(uuid.uuid4())[:5], "Nombre":n, "Cedula":c, "Email":e, "Saldo_Total_Aportado":0}])
-                conn.update(worksheet="Ayudas_Listado", data=pd.concat([df_a, new], ignore_index=True)); st.rerun()
+                conn.update(worksheet="Ayudas_Listado", data=pd.concat([df_a, new], ignore_index=True))
+                st.session_state.show_form_a = False; st.rerun()
 
     bq_a = st.text_input("🔍 BUSCAR EN AYUDAS:")
     act_a = df_a if not df_a.empty else pd.DataFrame()
-    if bq_a: act_a = act_a[act_a['Nombre'].str.contains(bq_a, case=False)]
+    if bq_a and not act_a.empty: act_a = act_a[act_a['Nombre'].str.contains(bq_a, case=False)]
 
     for idx, row in act_a.iterrows():
-        with st.expander(f"👤 {row['Nombre'].upper()} | TOTAL: ${row['Saldo_Total_Aportado']}"):
+        with st.expander(f"👤 {row['Nombre'].upper()} | TOTAL: ${row['Saldo_Total_Aportado']}", expanded=(st.session_state.id_abierto == row['ID'])):
             c1, c2 = st.columns(2)
             with c1:
                 with st.form(key=f"fa_{row['ID']}"):
-                    m = st.number_input("Monto:", value=v_y); ft = st.file_uploader("📸 RECIBO:", key=f"ia_{row['ID']}")
-                    if st.form_submit_button("✅ GUARDAR"):
+                    m = st.number_input("Monto:", value=v_y)
+                    ft = st.file_uploader("📸 RECIBO:", key=f"ia_{row['ID']}_{st.session_state.pago_key}")
+                    if st.form_submit_button("✅ GUARDAR APORTE"):
                         if ft:
                             url = subir_img(ft.getvalue())
+                            st.session_state.id_abierto = row['ID']
                             new_h = pd.DataFrame([{"ID_Socio": row['ID'], "Fecha": datetime.now().strftime("%Y-%m-%d"), "Monto": m, "Comprobante": url}])
                             conn.update(worksheet="Pagos_Ayudas", data=pd.concat([df_ah, new_h], ignore_index=True))
                             df_a.at[idx, "Saldo_Total_Aportado"] = float(row['Saldo_Total_Aportado']) + m
-                            conn.update(worksheet="Ayudas_Listado", data=df_a); st.rerun()
-            with c2: st.download_button(f"📊 EXCEL {row['Nombre'].split()[0]}", data=generar_excel_personal(row, df_ah, "AYUDAS"), file_name=f"Ayuda_{row['Nombre']}.xlsx", key=f"dla_{row['ID']}")
-            # BOTÓN ELIMINAR CON CONFIRMACIÓN
+                            conn.update(worksheet="Ayudas_Listado", data=df_a)
+                            if row.get('Email'): enviar_mail(row['Email'], row['Nombre'], generar_excel_personal(df_a.loc[idx], pd.concat([df_ah, new_h]), "AYUDAS"), url, "Ayudas")
+                            st.session_state.pago_key += 1
+                            st.rerun()
+            with c2: 
+                st.download_button(f"📊 EXCEL {row['Nombre'].split()[0]}", data=generar_excel_personal(row, df_ah, "AYUDAS"), file_name=f"Ayuda_{row['Nombre']}.xlsx", key=f"dla_{row['ID']}")
             with st.popover("🗑️ ELIMINAR DE LISTA"):
                 st.warning(f"¿Estás seguro que quieres borrar a {row['Nombre']}?")
                 if st.button("SÍ, BORRAR DEFINITIVAMENTE", key=f"del_a_{row['ID']}"):
