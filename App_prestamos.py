@@ -15,14 +15,20 @@ st.set_page_config(page_title="Sistema Pro Jose Figueroa", page_icon="🏦", lay
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def cargar_prestamos():
-    df = conn.read(worksheet="Sheet1", ttl="0") # Tu hoja principal
-    if not df.empty:
-        df["Cedula"] = df["Cedula"].astype(str).str.replace(".0", "", regex=False)
-        df["ID"] = df["ID"].astype(str).str.replace(".0", "", regex=False)
-    return df
+    try:
+        # AHORA BUSCA LA PESTAÑA "Prestamos"
+        df = conn.read(worksheet="Prestamos", ttl="0") 
+        if not df.empty:
+            df["Cedula"] = df["Cedula"].astype(str).str.replace(".0", "", regex=False)
+            df["ID"] = df["ID"].astype(str).str.replace(".0", "", regex=False)
+        return df
+    except Exception as e:
+        st.error("Error: Asegúrate de que la primera pestaña en tu Google Sheets se llame exactamente 'Prestamos'")
+        st.stop()
 
 def cargar_historial_pagos():
     try:
+        # AHORA BUSCA LA PESTAÑA "Pagos"
         df = conn.read(worksheet="Pagos", ttl="0")
         return df
     except:
@@ -76,7 +82,8 @@ with tab1:
                 "Nombre": nombre, "Cedula": str(ced), "Monto_Inicial": monto, "Saldo_Restante": monto,
                 "Cuota_Mensual": round(cuota, 2), "Meses_Totales": meses, "Pagos_Realizados": 0, "Estado": "ACTIVO", "Tasa": tasa
             }])
-            conn.update(worksheet="Sheet1", data=pd.concat([df_p, nuevo], ignore_index=True))
+            # GUARDA EN LA PESTAÑA "Prestamos"
+            conn.update(worksheet="Prestamos", data=pd.concat([df_p, nuevo], ignore_index=True))
             st.balloons()
             st.rerun()
 
@@ -115,7 +122,7 @@ with tab4:
             with st.spinner("Sincronizando..."):
                 link = subir_a_imgbb(foto.getvalue()) if foto else ""
                 
-                # 1. Registrar en Historial
+                # 1. Registrar en Historial (Pestaña "Pagos")
                 nuevo_pago = pd.DataFrame([{
                     "ID_Prestamo": id_pago, "Fecha_Pago": datetime.now().strftime("%Y-%m-%d %H:%M"),
                     "Cuotas_Pagadas": n_cuotas, "Monto_Pagado": round(c_pago["Cuota_Mensual"] * n_cuotas, 2),
@@ -123,7 +130,7 @@ with tab4:
                 }])
                 conn.update(worksheet="Pagos", data=pd.concat([df_h, nuevo_pago], ignore_index=True))
                 
-                # 2. Actualizar Saldo en Sheet1
+                # 2. Actualizar Saldo en Sheet1 (Pestaña "Prestamos")
                 idx = df_p[df_p["ID"] == id_pago].index[0]
                 df_p.at[idx, "Pagos_Realizados"] += n_cuotas
                 abono = (c_pago["Monto_Inicial"] / c_pago["Meses_Totales"]) * n_cuotas
@@ -131,7 +138,7 @@ with tab4:
                 if df_p.at[idx, "Pagos_Realizados"] >= c_pago["Meses_Totales"]:
                     df_p.at[idx, "Estado"] = "PAGADO"
                 
-                conn.update(worksheet="Sheet1", data=df_p)
+                conn.update(worksheet="Prestamos", data=df_p)
                 st.balloons()
                 time.sleep(2)
                 st.rerun()
