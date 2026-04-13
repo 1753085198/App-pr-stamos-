@@ -36,7 +36,7 @@ st.markdown("""
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- ESTADOS DE SESIÓN ---
+# --- ESTADOS DE SESIÓN (CRUCIAL PARA LA PERSISTENCIA) ---
 if 'pago_key' not in st.session_state: st.session_state.pago_key = 0
 if 'cliente_abierto' not in st.session_state: st.session_state.cliente_abierto = None
 
@@ -48,8 +48,8 @@ def enviar_correo_pago(email_destino, nombre, excel_data, url_comprobante):
         msg = MIMEMultipart()
         msg['From'] = remitente
         msg['To'] = email_destino
-        msg['Subject'] = f"✅ Comprobante de Pago Actualizado - {nombre}"
-        cuerpo = f"Hola {nombre},\n\nConfirmamos tu pago. Adjunto tu estado de cuenta actualizado.\nComprobante: {url_comprobante}"
+        msg['Subject'] = f"✅ Comprobante de Pago - {nombre}"
+        cuerpo = f"Hola {nombre},\n\nConfirmamos tu pago. Adjunto tu estado de cuenta actualizado.\nRecibo: {url_comprobante}"
         msg.attach(MIMEText(cuerpo, 'plain'))
         part = MIMEBase('application', 'octet-stream')
         part.set_payload(excel_data)
@@ -64,38 +64,28 @@ def enviar_correo_pago(email_destino, nombre, excel_data, url_comprobante):
         return True
     except: return False
 
-# --- GENERADOR DE EXCEL IGUAL A LA IMAGEN ---
+# --- GENERADOR DE EXCEL (ESTILO IMAGEN) ---
 def generar_excel_premium(datos_c, historial_c):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         ws1 = writer.book.create_sheet("ESTADO DE CUENTA", 0)
-        
-        # Colores y Fuentes
         f_azul = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
         f_verde = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
         font_b = Font(bold=True); font_w = Font(color="FFFFFF", bold=True); font_g = Font(color="006100", bold=True)
         
-        # Estructura del Encabezado
         ws1["A1"] = "ESTADO DE CUENTA BANCARIO"; ws1["A1"].font = Font(bold=True, size=16)
-        
-        # Bloque Izquierdo
         ws1["A3"] = "NOMBRE:"; ws1["B3"] = str(datos_c['Nombre']).upper()
         ws1["A4"] = "CÉDULA:"; ws1["B4"] = str(datos_c['Cedula']).replace(".0", "")
         ws1["A5"] = "FECHA DE INICIO:"; ws1["B5"] = str(datos_c['Fecha'])
-        
-        # Bloque Derecho
         ws1["D3"] = "MONTO TOTAL PRESTADO:"; ws1["E3"] = f"${datos_c['Monto_Inicial']}"
         ws1["D4"] = "TASA DE INTERÉS:"; ws1["E4"] = f"{datos_c['Tasa']}% Anual"
         ws1["D5"] = "PLAZO TOTAL:"; ws1["E5"] = f"{datos_c['Meses_Totales']} Meses"
-        
         ws1["D7"] = "PAGOS REALIZADOS:"; ws1["E7"] = f"{datos_c['Pagos_Realizados']} Cuotas"
         ws1["D8"] = "VALOR FALTANTE (SALDO):"; ws1["E8"] = f"${datos_c['Saldo_Restante']}"
         ws1["E8"].font = Font(bold=True, color="FF0000")
+        
+        for r in [3, 4, 5, 7, 8]: ws1[f"A{r}"].font = font_b; ws1[f"D{r}"].font = font_b
 
-        for row in [3, 4, 5, 7, 8]:
-            ws1[f"A{row}"].font = font_b; ws1[f"D{row}"].font = font_b
-
-        # Tabla de Pagos
         ws1["A10"] = "PLAN DE PAGOS"; ws1["A10"].font = font_b
         h = ["N° Cuota", "Descripción del Pago", "Valor Cuota ($)", "Estado Actual"]
         for c, t in enumerate(h, 1):
@@ -105,8 +95,7 @@ def generar_excel_premium(datos_c, historial_c):
         pag = int(datos_c['Pagos_Realizados'])
         for i in range(1, int(datos_c['Meses_Totales']) + 1):
             r = 11 + i
-            ws1.cell(row=r, column=1, value=i)
-            ws1.cell(row=r, column=2, value=f"Cuota del mes número {i}")
+            ws1.cell(row=r, column=1, value=i); ws1.cell(row=r, column=2, value=f"Cuota del mes número {i}")
             ws1.cell(row=r, column=3, value=datos_c['Cuota_Mensual'])
             est = "PAGADO" if i <= pag else "PENDIENTE"
             ws1.cell(row=r, column=4, value=est)
@@ -155,10 +144,13 @@ with t_g:
     
     if not act.empty:
         for idx, row in act.iterrows():
-            # PERSISTENCIA: Se mantiene abierto el que estabas viendo
-            abierto = st.session_state.cliente_abierto == row['ID']
-            with st.expander(f"👤 {row['Nombre'].upper()} | 💰 SALDO: ${row['Saldo_Restante']}", expanded=abierto):
-                st.session_state.cliente_abierto = row['ID']
+            # ESTA ES LA CLAVE: expanded=True si el ID coincide
+            abierto_manual = st.session_state.cliente_abierto == row['ID']
+            with st.expander(f"👤 {row['Nombre'].upper()} | 💰 SALDO: ${row['Saldo_Restante']}", expanded=abierto_manual):
+                # Si el usuario hace clic en el expander, guardamos su ID
+                if st.button(f"Fijar vista de {row['Nombre'].split()[0]}", key=f"fijar_{row['ID']}"):
+                    st.session_state.cliente_abierto = row['ID']
+                
                 c1, c2 = st.columns(2)
                 with c1:
                     st.metric("CUOTA", f"${row['Cuota_Mensual']}")
@@ -166,34 +158,30 @@ with t_g:
                     h_c = df_h[df_h["ID_Prestamo"] == row['ID']] if df_h is not None else pd.DataFrame()
                     st.download_button(f"📥 EXCEL ACTUAL", data=generar_excel_premium(row, h_c), file_name=f"Estado_{row['Nombre']}.xlsx", key=f"ex_{row['ID']}", use_container_width=True)
                 with c2:
+                    # Formulario con llave dinámica para limpiar la foto
                     with st.form(key=f"f_{row['ID']}_{st.session_state.pago_key}"):
+                        st.session_state.cliente_abierto = row['ID'] # Asegurar que se guarde al interactuar
                         mail = st.text_input("Enviar reporte a:", value=row.get('Email', ""))
                         nc = st.number_input("Cuotas:", min_value=1, value=1)
-                        ft = st.file_uploader("📸 RECIBO:", type=["jpg","png","jpeg"], key=f"f_{row['ID']}_{st.session_state.pago_key}")
+                        ft = st.file_uploader("📸 RECIBO:", type=["jpg","png","jpeg"], key=f"foto_{row['ID']}_{st.session_state.pago_key}")
                         if st.form_submit_button("✅ CONFIRMAR Y ENVIAR", use_container_width=True, type="primary"):
-                            with st.spinner('Procesando...'):
-                                url = subir_a_imgbb_comprimido(ft.getvalue()) if ft else ""
-                                
-                                # Actualizar Historial
-                                new_pg = pd.DataFrame([{"ID_Prestamo": row['ID'], "Fecha_Pago": datetime.now().strftime("%Y-%m-%d %H:%M"), "Cuotas_Pagadas": nc, "Monto_Pagado": round(row['Cuota_Mensual']*nc, 2), "URL_Comprobante": url}])
-                                conn.update(worksheet="Pagos", data=pd.concat([df_h, new_pg], ignore_index=True))
-                                
-                                # Actualizar Saldo
-                                r_upd = row.copy()
-                                r_upd["Pagos_Realizados"] += nc
-                                r_upd["Saldo_Restante"] = round(max(0, row["Saldo_Restante"] - (row["Monto_Inicial"]/row["Meses_Totales"])*nc), 2)
-                                if r_upd["Pagos_Realizados"] >= row["Meses_Totales"]: r_upd["Estado"] = "PAGADO"
-                                df_p.loc[idx] = r_upd
-                                conn.update(worksheet="Prestamos", data=df_p)
-                                
-                                # Generar Excel con datos nuevos ANTES del rerun
-                                h_act = pd.concat([df_h, new_pg], ignore_index=True)
-                                h_c_act = h_act[h_act["ID_Prestamo"] == row['ID']]
-                                exc_act = generar_excel_premium(r_upd, h_c_act)
-                                if mail: enviar_correo_pago(mail, row['Nombre'], exc_act, url)
-                                
-                                st.session_state.pago_key += 1
-                                st.balloons(); time.sleep(1); st.rerun()
+                            url = subir_a_imgbb_comprimido(ft.getvalue()) if ft else ""
+                            # Actualización lógica
+                            new_pg = pd.DataFrame([{"ID_Prestamo": row['ID'], "Fecha_Pago": datetime.now().strftime("%Y-%m-%d %H:%M"), "Cuotas_Pagadas": nc, "Monto_Pagado": round(row['Cuota_Mensual']*nc, 2), "URL_Comprobante": url}])
+                            conn.update(worksheet="Pagos", data=pd.concat([df_h, new_pg], ignore_index=True))
+                            r_u = row.copy()
+                            r_u["Pagos_Realizados"] += nc
+                            r_u["Saldo_Restante"] = round(max(0, row["Saldo_Restante"] - (row["Monto_Inicial"]/row["Meses_Totales"])*nc), 2)
+                            if r_u["Pagos_Realizados"] >= row["Meses_Totales"]: r_u["Estado"] = "PAGADO"
+                            df_p.loc[idx] = r_u
+                            conn.update(worksheet="Prestamos", data=df_p)
+                            # Enviar correo con datos nuevos
+                            h_act = pd.concat([df_h, new_pg], ignore_index=True)
+                            exc_act = generar_excel_premium(r_u, h_act[h_act["ID_Prestamo"] == row['ID']])
+                            if mail: enviar_correo_pago(mail, row['Nombre'], exc_act, url)
+                            
+                            st.session_state.pago_key += 1
+                            st.balloons(); time.sleep(1); st.rerun()
                 
                 if st.button(f"🗑️ ELIMINAR", key=f"del_{row['ID']}", use_container_width=True, type="secondary"):
                     conn.update(worksheet="Prestamos", data=df_p[df_p["ID"] != row['ID']]); st.rerun()
