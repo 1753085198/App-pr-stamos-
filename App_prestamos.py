@@ -19,18 +19,27 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 # 1. CONFIGURACIÓN
 st.set_page_config(page_title="SISTEMA PRO", page_icon="🏦", layout="wide")
 
-# 2. CSS PERSONALIZADO (BOTÓN FLOTANTE NEÓN Y ESTILO GIGANTE)
+# 2. CSS PERSONALIZADO (BOTÓN EXCEL VERDE Y NUEVO FLOTANTE)
 st.markdown("""
     <style>
     .stMarkdown p, label, .stSelectbox p, .stNumberInput label, .stTextInput label { font-size: 32px !important; font-weight: 700 !important; }
     input { font-size: 26px !important; height: 60px !important; }
     
+    /* Botón Confirmar Pago (Verde Estándar) */
     .stButton>button[kind="primary"] { 
         font-size: 35px !important; font-weight: 900 !important; height: 7rem !important; 
         border-radius: 20px !important; background-color: #28a745 !important; color: white !important; 
     }
     
-    /* SUPER BOTÓN FLOTANTE LLAMATIVO (👤➕) */
+    /* BOTÓN EXCEL GIGANTE Y VERDE (Asociado a Excel) */
+    .stDownloadButton>button {
+        font-size: 35px !important; font-weight: 900 !important; height: 7rem !important;
+        border-radius: 20px !important; background-color: #1D6F42 !important; /* Verde Excel */
+        color: white !important; border: none !important;
+        box-shadow: 0px 8px 15px rgba(29, 111, 66, 0.4) !important;
+    }
+
+    /* SUPER BOTÓN FLOTANTE (👤➕) */
     div.stButton > button:first-child[key^="btn_nuevo_circular"] {
         background-color: #ff5722 !important;
         color: white !important;
@@ -45,10 +54,6 @@ st.markdown("""
         bottom: 40px;
         right: 40px;
         z-index: 9999;
-    }
-    
-    div.stButton > button:first-child[key^="btn_nuevo_circular"]:hover {
-        transform: scale(1.1);
     }
 
     [data-testid="stMetricValue"] { font-size: 85px !important; font-weight: 900 !important; color: #007bff !important; }
@@ -81,38 +86,35 @@ def subir_img(archivo):
         return res.json()["data"]["url"]
     except: return ""
 
-def generar_excel(d_c, h_c):
+def generar_excel_pro(d_c, h_c):
     out = io.BytesIO()
     with pd.ExcelWriter(out, engine='openpyxl') as writer:
         ws = writer.book.create_sheet("ESTADO DE CUENTA", 0)
-        f_a, f_v = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid"), PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-        ws["A1"] = "ESTADO DE CUENTA"; ws["A3"], ws["B3"] = "NOMBRE:", str(d_c['Nombre']).upper()
+        f_azul, f_verde = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid"), PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+        ws["A1"] = "ESTADO DE CUENTA BANCARIO"; ws["A1"].font = Font(bold=True, size=16)
+        ws["A3"], ws["B3"] = "NOMBRE:", str(d_c['Nombre']).upper()
         ws["A4"], ws["B4"] = "CÉDULA:", str(d_c['Cedula'])
-        ws["D3"], ws["E3"] = "MONTO:", f"${d_c['Monto_Inicial']}"; ws["D4"], ws["E4"] = "SALDO:", f"${d_c['Saldo_Restante']}"
-        h = ["N°", "Descripción", "Valor", "Estado"]
+        ws["D3"], ws["E3"] = "MONTO TOTAL:", f"${d_c['Monto_Inicial']}"
+        ws["D4"], ws["E4"] = "SALDO ACTUAL:", f"${d_c['Saldo_Restante']}"
+        h = ["N°", "Descripción del Pago", "Valor Cuota", "Estado Actual"]
         for c, t in enumerate(h, 1):
-            cell = ws.cell(row=7, column=c, value=t)
-            cell.fill = f_a; cell.font = Font(color="FFFFFF", bold=True)
+            cell = ws.cell(row=11, column=c, value=t)
+            cell.fill = f_azul; cell.font = Font(color="FFFFFF", bold=True)
         pag = int(d_c['Pagos_Realizados'])
         for i in range(1, int(d_c['Meses_Totales']) + 1):
-            r = 7 + i
+            r = 11 + i
             ws.cell(row=r, column=1, value=i); ws.cell(row=r, column=3, value=d_c['Cuota_Mensual'])
             est = "PAGADO" if i <= pag else "PENDIENTE"
             ws.cell(row=r, column=4, value=est)
             if i <= pag:
-                for col in range(1, 5): ws.cell(row=r, column=col).fill = f_v
-        ws2 = writer.book.create_sheet("HISTORIAL", 1)
-        if h_c is not None and not h_c.empty:
-            for r_idx, row in enumerate(dataframe_to_rows(h_c, index=False, header=True), 1):
-                for c_idx, val in enumerate(row, 1): ws2.cell(row=r_idx, column=c_idx, value=val)
-        for w in [ws, ws2]:
-            for col in w.columns: w.column_dimensions[col[0].column_letter].width = 25
+                for col in range(1, 5): ws.cell(row=r, column=col).fill = f_verde
+        for col in ws.columns: ws.column_dimensions[col[0].column_letter].width = 25
     return out.getvalue()
 
 def enviar_mail(dest, nom, exc, url):
     try:
-        msg = MIMEMultipart(); msg['From'] = st.secrets["EMAIL_USER"]; msg['To'] = dest; msg['Subject'] = f"✅ Pago - {nom}"
-        msg.attach(MIMEText(f"Hola {nom}, adjunto tu reporte.\nRecibo: {url}", 'plain'))
+        msg = MIMEMultipart(); msg['From'] = st.secrets["EMAIL_USER"]; msg['To'] = dest; msg['Subject'] = f"✅ Reporte de Pago - {nom}"
+        msg.attach(MIMEText(f"Hola {nom}, adjunto tu estado actualizado.\nRecibo: {url}", 'plain'))
         p = MIMEBase('application', 'octet-stream'); p.set_payload(exc); encoders.encode_base64(p)
         p.add_header('Content-Disposition', f"attachment; filename=Estado_{nom}.xlsx"); msg.attach(p)
         s = smtplib.SMTP('smtp.gmail.com', 587); s.starttls(); s.login(st.secrets["EMAIL_USER"], st.secrets["EMAIL_PASS"]); s.send_message(msg); s.quit()
@@ -123,57 +125,52 @@ st.title("🏦 PANEL DE CONTROL")
 df_p, df_h = cargar_datos()
 
 if df_p is not None:
-    # BOTÓN FLOTANTE
+    # BOTÓN 👤➕
     if st.button("👤➕", key="btn_nuevo_circular"):
         st.session_state.mostrar_nuevo = not st.session_state.mostrar_nuevo
 
     if st.session_state.mostrar_nuevo:
-        with st.container():
+        with st.form("n_form", clear_on_submit=True):
             st.markdown("### 👤➕ REGISTRAR NUEVO NOMBRE")
-            with st.form("n_form", clear_on_submit=True):
-                nm = st.text_input("Nombre:")
-                ced = st.text_input("Cédula:")
-                ml = st.text_input("Correo:")
-                c1, c2, c3 = st.columns(3)
-                mn = c1.number_input("Monto:")
-                ts = c3.number_input("Tasa %:")
-                pz = c2.number_input("Meses:")
-                if st.form_submit_button("💾 GUARDAR NUEVO", use_container_width=True):
-                    tm = (ts/100)/12; cu = mn * (tm * (1+tm)**pz) / ((1+tm)**pz - 1) if tm > 0 else mn/pz
-                    nuevo_reg = pd.DataFrame([{"ID": str(uuid.uuid4())[:8], "Fecha": datetime.now().strftime("%Y-%m-%d"), "Nombre": nm, "Cedula": ced, "Email": ml, "Monto_Inicial": mn, "Saldo_Restante": mn, "Cuota_Mensual": round(cu, 2), "Meses_Totales": int(pz), "Pagos_Realizados": 0, "Estado": "ACTIVO", "Tasa": ts}])
-                    conn.update(worksheet="Prestamos", data=pd.concat([df_p, nuevo_reg], ignore_index=True))
-                    st.session_state.mostrar_nuevo = False
-                    st.balloons(); time.sleep(0.5); st.rerun()
+            nm, ced, ml = st.text_input("Nombre:"), st.text_input("Cédula:"), st.text_input("Correo:")
+            c1, c2, c3 = st.columns(3)
+            mn, ts, pz = c1.number_input("Monto:"), c3.number_input("Tasa %:"), c2.number_input("Meses:")
+            if st.form_submit_button("💾 GUARDAR", use_container_width=True):
+                tm = (ts/100)/12; cu = mn * (tm * (1+tm)**pz) / ((1+tm)**pz - 1) if tm > 0 else mn/pz
+                nuevo = pd.DataFrame([{"ID": str(uuid.uuid4())[:8], "Fecha": datetime.now().strftime("%Y-%m-%d"), "Nombre": nm, "Cedula": ced, "Email": ml, "Monto_Inicial": mn, "Saldo_Restante": mn, "Cuota_Mensual": round(cu, 2), "Meses_Totales": int(pz), "Pagos_Realizados": 0, "Estado": "ACTIVO", "Tasa": ts}])
+                conn.update(worksheet="Prestamos", data=pd.concat([df_p, nuevo], ignore_index=True))
+                st.session_state.mostrar_nuevo = False
+                st.balloons(); time.sleep(0.5); st.rerun()
 
     bq = st.text_input("🔍 BUSCAR NOMBRE:", placeholder="Escribe aquí...")
     act = df_p[df_p["Estado"] == "ACTIVO"]
     if bq: act = act[act['Nombre'].str.contains(bq, case=False) | act['Cedula'].str.contains(bq)]
     
     for idx, row in act.iterrows():
-        abierto = st.session_state.id_abierto == row['ID']
-        with st.expander(f"👤 {row['Nombre'].upper()} | 💰 SALDO: ${row['Saldo_Restante']}", expanded=abierto):
+        is_open = st.session_state.id_abierto == row['ID']
+        with st.expander(f"👤 {row['Nombre'].upper()} | 💰 SALDO: ${row['Saldo_Restante']}", expanded=is_open):
             c1, c2 = st.columns(2)
             with c1:
                 st.metric("CUOTA", f"${row['Cuota_Mensual']}")
                 st.metric("PAGOS", f"{row['Pagos_Realizados']}/{row['Meses_Totales']}")
                 h_c = df_h[df_h["ID_Prestamo"] == row['ID']] if df_h is not None else pd.DataFrame()
-                st.download_button("📥 EXCEL", data=generar_excel(row, h_c), file_name=f"Estado_{row['Nombre']}.xlsx", key=f"ex_{row['ID']}", use_container_width=True)
+                st.download_button("📊 DESCARGAR EXCEL", data=generar_excel_pro(row, h_c), file_name=f"Estado_{row['Nombre']}.xlsx", key=f"ex_{row['ID']}", use_container_width=True)
             with c2:
                 with st.form(key=f"f_{row['ID']}_{st.session_state.pago_key}"):
-                    correo_envio = st.text_input("Correo:", value=row.get('Email', ""))
+                    correo = st.text_input("Correo:", value=row.get('Email', ""))
                     n_cuotas = st.number_input("Cuotas:", min_value=1, value=1)
-                    ft = st.file_uploader("📸 RECIBO (OBLIGATORIO):", type=["jpg","png","jpeg"], key=f"foto_{row['ID']}_{st.session_state.pago_key}")
+                    ft = st.file_uploader("📸 RECIBO (OBLIGATORIO):", type=["jpg","png","jpeg"], key=f"f_{row['ID']}_{st.session_state.pago_key}")
                     if st.form_submit_button("✅ CONFIRMAR", use_container_width=True, type="primary"):
-                        if ft is None: st.error("❌ Carga la foto.")
+                        if ft is None: st.error("❌ Sube la foto.")
                         else:
                             st.session_state.id_abierto = row['ID']
-                            url_img = subir_img(ft.getvalue())
-                            new_pg = pd.DataFrame([{"ID_Prestamo": row['ID'], "Fecha_Pago": datetime.now().strftime("%Y-%m-%d %H:%M"), "Cuotas_Pagadas": n_cuotas, "Monto_Pagado": round(row['Cuota_Mensual']*n_cuotas, 2), "URL_Comprobante": url_img}])
-                            conn.update(worksheet="Pagos", data=pd.concat([df_h, new_pg], ignore_index=True))
-                            row_upd = row.copy(); row_upd["Pagos_Realizados"] += n_cuotas; row_upd["Saldo_Restante"] = round(max(0, row["Saldo_Restante"] - (row["Monto_Inicial"]/row["Meses_Totales"])*n_cuotas), 2)
-                            if row_upd["Pagos_Realizados"] >= row["Meses_Totales"]: row_upd["Estado"] = "PAGADO"
-                            df_p.loc[idx] = row_upd; conn.update(worksheet="Prestamos", data=df_p)
-                            if correo_envio: enviar_mail(correo_envio, row['Nombre'], generar_excel(row_upd, pd.concat([df_h, new_pg])), url_img)
+                            url = subir_img(ft.getvalue())
+                            new_p = pd.DataFrame([{"ID_Prestamo": row['ID'], "Fecha_Pago": datetime.now().strftime("%Y-%m-%d %H:%M"), "Cuotas_Pagadas": n_cuotas, "Monto_Pagado": round(row['Cuota_Mensual']*n_cuotas, 2), "URL_Comprobante": url}])
+                            conn.update(worksheet="Pagos", data=pd.concat([df_h, new_p], ignore_index=True))
+                            r_u = row.copy(); r_u["Pagos_Realizados"] += n_cuotas; r_u["Saldo_Restante"] = round(max(0, row["Saldo_Restante"] - (row["Monto_Inicial"]/row["Meses_Totales"])*n_cuotas), 2)
+                            if r_u["Pagos_Realizados"] >= row["Meses_Totales"]: r_u["Estado"] = "PAGADO"
+                            df_p.loc[idx] = r_u; conn.update(worksheet="Prestamos", data=df_p)
+                            if correo: enviar_mail(correo, row['Nombre'], generar_excel_pro(r_u, pd.concat([df_h, new_p])), url)
                             st.session_state.pago_key += 1; st.balloons(); time.sleep(0.5); st.rerun()
             
             if st.button(f"🗑️ ELIMINAR {row['Nombre'].split()[0]}", key=f"del_{row['ID']}", use_container_width=True, type="secondary"):
