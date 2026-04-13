@@ -60,7 +60,6 @@ def generar_tabla_completa(capital, meses, tasa_anual):
 def generar_excel(nombre, cedula, capital, meses, tasa_anual, df_tabla, id_cliente):
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        # 1. Hoja principal de Amortización
         df_tabla.to_excel(writer, index=False, startrow=7, sheet_name="Amortizacion")
         workbook = writer.book
         worksheet = writer.sheets["Amortizacion"]
@@ -83,39 +82,30 @@ def generar_excel(nombre, cedula, capital, meses, tasa_anual, df_tabla, id_clien
         worksheet.column_dimensions['D'].width = 18
         worksheet.column_dimensions['E'].width = 18
 
-        # 2. Nueva hoja de Comprobantes
         hoja_comp = workbook.create_sheet("Comprobantes")
         hoja_comp["A1"] = f"COMPROBANTES DE PAGO - {nombre}"
         hoja_comp.column_dimensions['A'].width = 40
         
-        # Buscar imágenes de este cliente
         patron = os.path.join(CARPETA_COMPROBANTES, f"*_{id_cliente}_*.*")
         archivos_imagenes = glob.glob(patron)
-        
-        # Ordenar archivos para que aparezcan en orden de mes
         archivos_imagenes.sort()
         
         fila_actual = 3
-        if not archivos_imagenes: # <-- Corrección de "no" por "not"
+        if not archivos_imagenes: 
             hoja_comp["A3"] = "No hay comprobantes registrados aún."
         else:
             for ruta_img in archivos_imagenes:
                 try:
-                    # Extraer el nombre del mes del archivo para ponerlo como título
                     nombre_archivo = os.path.basename(ruta_img)
-                    mes_texto = nombre_archivo.split("_")[1] # Ejemplo: Mes_1 -> extrae 1
-                    
+                    mes_texto = nombre_archivo.split("_")[1] 
                     hoja_comp[f"A{fila_actual}"] = f"Comprobante - Cuota {mes_texto}"
                     fila_actual += 1
                     
-                    # Insertar imagen
                     img = xlImage(ruta_img)
-                    # Redimensionar para que no ocupe todo el Excel (aprox 300x400 pixeles)
                     img.width = 300
                     img.height = 400
-                    
                     hoja_comp.add_image(img, f"A{fila_actual}")
-                    fila_actual += 22 # Dar espacio para la siguiente imagen (aprox 22 filas)
+                    fila_actual += 22 
                 except Exception as e:
                     hoja_comp[f"A{fila_actual}"] = f"Error al cargar imagen: {ruta_img}"
                     fila_actual += 2
@@ -162,15 +152,30 @@ with tab1:
             st.success(f"¡Préstamo de {nombre} guardado!")
             st.rerun()
 
-# PESTAÑA 2: LISTA
+# PESTAÑA 2: LISTA (AHORA DIVIDIDA EN ACTIVOS E HISTORIAL)
 with tab2:
-    st.subheader("Base de datos")
-    if not df_prestamos.empty: # <-- Corrección de "no" por "not"
-        st.dataframe(df_prestamos[["Nombre", "Cedula", "Monto_Inicial", "Saldo_Restante", "Pagos_Realizados", "Estado"]], use_container_width=True)
+    st.subheader("Base de datos de clientes")
+    if not df_prestamos.empty:
+        activos_lista = df_prestamos[df_prestamos["Estado"] == "ACTIVO"]
+        pagados_lista = df_prestamos[df_prestamos["Estado"] == "PAGADO"]
+        
+        st.write(f"### 🟢 Préstamos Activos ({len(activos_lista)})")
+        if not activos_lista.empty:
+            st.dataframe(activos_lista[["Nombre", "Cedula", "Monto_Inicial", "Saldo_Restante", "Pagos_Realizados"]], use_container_width=True)
+        else:
+            st.info("No tienes préstamos activos en este momento.")
+            
+        st.write(f"### ⚪ Historial - Pagados ({len(pagados_lista)})")
+        if not pagados_lista.empty:
+            st.dataframe(pagados_lista[["Nombre", "Cedula", "Monto_Inicial", "Pagos_Realizados", "Estado"]], use_container_width=True)
+        else:
+            st.info("Aún no tienes préstamos completamente pagados.")
+    else:
+        st.info("La base de datos está vacía.")
 
-# PESTAÑA 3: EXCEL CON IMÁGENES
+# PESTAÑA 3: EXCEL CON IMÁGENES Y BOTÓN DE ELIMINAR
 with tab3:
-    st.subheader("Ver tabla completa y exportar")
+    st.subheader("Ver tabla, exportar o eliminar")
     if not df_prestamos.empty:
         opciones_ver = df_prestamos["Nombre"].astype(str) + " - C.I: " + df_prestamos["Cedula"].astype(str) + " (ID: " + df_prestamos["ID"].astype(str) + ")"
         seleccion_ver = st.selectbox("Selecciona un cliente:", opciones_ver, key="ver_cliente")
@@ -182,7 +187,6 @@ with tab3:
             df_tabla = generar_tabla_completa(cliente_ver["Monto_Inicial"], cliente_ver["Meses_Totales"], cliente_ver["Tasa"])
             st.dataframe(df_tabla.style.apply(resaltar_pagados, pagos_hechos=cliente_ver["Pagos_Realizados"], axis=1), use_container_width=True)
             
-            # Pasamos el ID para que busque las fotos
             buffer_excel = generar_excel(
                 cliente_ver["Nombre"], cliente_ver["Cedula"], cliente_ver["Monto_Inicial"], 
                 cliente_ver["Meses_Totales"], cliente_ver["Tasa"], df_tabla, id_ver
@@ -193,8 +197,18 @@ with tab3:
                 file_name=f"Prestamo_{cliente_ver['Nombre'].replace(' ', '_')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+            
+            # --- NUEVO: BOTÓN DE ELIMINAR ---
+            st.divider() # Pone una línea separadora
+            st.write("#### ⚠️ Zona de peligro")
+            if st.button("🗑️ Eliminar este préstamo permanentemente"):
+                # Filtramos la base de datos para quedarnos con todos EXCEPTO este ID
+                df_prestamos = df_prestamos[df_prestamos["ID"] != id_ver]
+                guardar_bd(df_prestamos)
+                st.success("El registro ha sido eliminado del sistema.")
+                st.rerun()
 
-# PESTAÑA 4: PAGAR (SOLO FOTOS)
+# PESTAÑA 4: PAGAR
 with tab4:
     st.subheader("Registrar el pago")
     activos = df_prestamos[df_prestamos["Estado"] == "ACTIVO"]
@@ -209,7 +223,6 @@ with tab4:
             
             st.write(f"**Cuota:** ${cliente['Cuota_Mensual']} | **Progreso:** {cliente['Pagos_Realizados']} de {cliente['Meses_Totales']}")
             
-            # Solo permitimos formatos de imagen soportados por Excel
             comprobante = st.file_uploader("Sube la foto del comprobante (JPG o PNG):", type=["jpg", "jpeg", "png"])
             
             if st.button("Confirmar Pago"):
@@ -217,7 +230,6 @@ with tab4:
                 cuota_pagada = cliente['Pagos_Realizados'] + 1
                 
                 if comprobante is not None:
-                    # Guardamos la imagen con un nombre estructurado: Mes_1_ID_nombre.jpg
                     ext = comprobante.name.split('.')[-1]
                     nombre_archivo = f"Mes_{cuota_pagada}_{id_seleccionado}_recibo.{ext}"
                     ruta_guardado = os.path.join(CARPETA_COMPROBANTES, nombre_archivo)
