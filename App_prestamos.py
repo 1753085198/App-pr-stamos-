@@ -100,12 +100,13 @@ def generar_excel_pro(d_c, h_c):
             cell.fill = f_azul; cell.font = Font(color="FFFFFF", bold=True)
         
         if h_c is not None and not h_c.empty:
-            for r_idx, fila_h in h_c.reset_index(drop=True).iterrows():
+            # FILTRAR SOLO LOS PAGOS DE ESTA PERSONA
+            h_c_filtrado = h_c[h_c["ID_Prestamo"] == d_c['ID']].reset_index(drop=True)
+            for r_idx, fila_h in h_c_filtrado.iterrows():
                 r_num = r_idx + 4
                 ws_comp.cell(row=r_num, column=1, value=str(fila_h['Fecha_Pago']))
                 ws_comp.cell(row=r_num, column=2, value=fila_h['Monto_Pagado'])
                 ws_comp.cell(row=r_num, column=3, value=fila_h['Cuotas_Pagadas'])
-                # VALIDACIÓN CRÍTICA PARA HYPERLINK
                 url_val = fila_h.get('URL_Comprobante', "")
                 if pd.notnull(url_val) and str(url_val).startswith("http"):
                     link_c = ws_comp.cell(row=r_num, column=4, value="VER RECIBO")
@@ -156,8 +157,8 @@ if df_p is not None:
             with c1:
                 st.metric("CUOTA", f"${row['Cuota_Mensual']}")
                 st.metric("PAGOS", f"{row['Pagos_Realizados']}/{row['Meses_Totales']}")
-                h_c = df_h[df_h["ID_Prestamo"] == row['ID']] if df_h is not None else pd.DataFrame()
-                st.download_button("📊 DESCARGAR EXCEL", data=generar_excel_pro(row, h_c), file_name=f"Estado_{row['Nombre']}.xlsx", key=f"ex_{row['ID']}", use_container_width=True)
+                h_c_local = df_h[df_h["ID_Prestamo"] == row['ID']] if df_h is not None else pd.DataFrame()
+                st.download_button("📊 DESCARGAR EXCEL", data=generar_excel_pro(row, h_c_local), file_name=f"Estado_{row['Nombre']}.xlsx", key=f"ex_{row['ID']}", use_container_width=True)
             with c2:
                 with st.form(key=f"f_{row['ID']}_{st.session_state.pago_key}"):
                     correo, n_cuotas = st.text_input("Correo:", value=row.get('Email', "")), st.number_input("Cuotas:", min_value=1, value=1)
@@ -165,16 +166,22 @@ if df_p is not None:
                     if st.form_submit_button("✅ CONFIRMAR"):
                         if ft:
                             st.session_state.id_abierto = row['ID']
-                            url_img = subir_img(ft.getvalue())
-                            new_p = pd.DataFrame([{"ID_Prestamo": row['ID'], "Fecha_Pago": datetime.now().strftime("%Y-%m-%d %H:%M"), "Cuotas_Pagadas": n_cuotas, "Monto_Pagado": round(row['Cuota_Mensual']*n_cuotas, 2), "URL_Comprobante": url_img}])
+                            url = subir_img(ft.getvalue())
+                            new_p = pd.DataFrame([{"ID_Prestamo": row['ID'], "Fecha_Pago": datetime.now().strftime("%Y-%m-%d %H:%M"), "Cuotas_Pagadas": n_cuotas, "Monto_Pagado": round(row['Cuota_Mensual']*n_cuotas, 2), "URL_Comprobante": url}])
                             conn.update(worksheet="Pagos", data=pd.concat([df_h, new_p], ignore_index=True))
-                            row_upd = row.copy(); row_upd["Pagos_Realizados"] += n_cuotas; row_upd["Saldo_Restante"] = round(max(0, row["Saldo_Restante"] - (row["Monto_Inicial"]/row["Meses_Totales"])*n_cuotas), 2)
+                            
+                            row_upd = row.copy()
+                            row_upd["Pagos_Realizados"] += n_cuotas
+                            row_upd["Saldo_Restante"] = round(max(0, row["Saldo_Restante"] - (row["Monto_Inicial"]/row["Meses_Totales"])*n_cuotas), 2)
                             if row_upd["Pagos_Realizados"] >= row["Meses_Totales"]: row_upd["Estado"] = "PAGADO"
                             df_p.loc[idx] = row_upd; conn.update(worksheet="Prestamos", data=df_p)
-                            # EXCEL CON DATOS NUEVOS
-                            exc_final = generar_excel_pro(row_upd, pd.concat([df_h, new_p]))
-                            if correo: enviar_mail(correo, row['Nombre'], exc_final, url_img)
-                            st.session_state.pago_key += 1; st.balloons(); time.sleep(0.5); st.rerun()
+                            
+                            # GENERAR EXCEL FILTRADO SOLO PARA ESTE CORREO
+                            h_c_actualizado = pd.concat([h_c_local, new_p], ignore_index=True)
+                            exc_final = generar_excel_pro(row_upd, h_c_actualizado)
+                            
+                            if correo: enviar_mail(correo, row['Nombre'], exc_final, url)
+                            st.session_state.pago_key += 1; st.rerun()
             
             if st.button(f"🗑️ ELIMINAR {row['Nombre'].split()[0]}", key=f"del_{row['ID']}", use_container_width=True):
                 conn.update(worksheet="Prestamos", data=df_p[df_p["ID"] != row['ID']]); st.rerun()
