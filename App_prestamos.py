@@ -17,9 +17,9 @@ from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.utils.dataframe import dataframe_to_rows
 
 # 1. CONFIGURACIÓN
-st.set_page_config(page_title="SISTEMA PRO", page_icon="🏦", layout="wide")
+st.set_page_config(page_title="SISTEMA FINANCIERO", page_icon="🏦", layout="wide")
 
-# 2. CSS ULTRA-GIGANTE
+# 2. CSS PARA EL EXAMEN (LIMPIO Y GIGANTE)
 st.markdown("""
     <style>
     button[data-baseweb="tab"] { font-size: 40px !important; font-weight: 900 !important; height: 100px !important; }
@@ -34,20 +34,23 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# Conexión con reintento simple
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- MEMORIA DE SESIÓN ---
 if 'pago_key' not in st.session_state: st.session_state.pago_key = 0
 if 'id_abierto' not in st.session_state: st.session_state.id_abierto = None
 
-# --- CARGA DE DATOS ---
 def cargar_datos():
-    df_p = conn.read(worksheet="Prestamos", ttl="0")
-    df_h = conn.read(worksheet="Pagos", ttl="0")
-    if df_p is not None:
-        df_p["Cedula"] = df_p["Cedula"].astype(str).str.replace(".0", "", regex=False)
-        df_p["ID"] = df_p["ID"].astype(str).str.replace(".0", "", regex=False)
-    return df_p, df_h
+    try:
+        df_p = conn.read(worksheet="Prestamos", ttl=0)
+        df_h = conn.read(worksheet="Pagos", ttl=0)
+        if df_p is not None:
+            df_p["Cedula"] = df_p["Cedula"].astype(str).str.replace(".0", "", regex=False)
+            df_p["ID"] = df_p["ID"].astype(str).str.replace(".0", "", regex=False)
+        return df_p, df_h
+    except Exception as e:
+        st.error("⚠️ Error de conexión con Google Sheets. Revisa el link en Secrets o espera 1 minuto.")
+        return None, None
 
 def subir_img(archivo):
     try:
@@ -82,7 +85,7 @@ def generar_excel(d_c, h_c):
             if i <= pag:
                 for col in range(1, 5): ws.cell(row=r, column=col).fill = f_v
         ws2 = writer.book.create_sheet("HISTORIAL", 1)
-        if not h_c.empty:
+        if h_c is not None and not h_c.empty:
             for r_idx, row in enumerate(dataframe_to_rows(h_c, index=False, header=True), 1):
                 for c_idx, val in enumerate(row, 1): ws2.cell(row=r_idx, column=c_idx, value=val)
         for w in [ws, ws2]:
@@ -91,11 +94,6 @@ def generar_excel(d_c, h_c):
 
 def enviar_mail(dest, nom, exc, url):
     try:
-        import smtplib
-        from email.mime.multipart import MIMEMultipart
-        from email.mime.text import MIMEText
-        from email.mime.base import MIMEBase
-        from email import encoders
         msg = MIMEMultipart(); msg['From'] = st.secrets["EMAIL_USER"]; msg['To'] = dest; msg['Subject'] = f"✅ Pago Recibido - {nom}"
         msg.attach(MIMEText(f"Hola {nom}, adjunto tu estado actualizado.\nRecibo: {url}", 'plain'))
         p = MIMEBase('application', 'octet-stream'); p.set_payload(exc); encoders.encode_base64(p)
@@ -106,20 +104,20 @@ def enviar_mail(dest, nom, exc, url):
 # --- INTERFAZ ---
 st.title("🏦 PANEL DE CONTROL")
 df_p, df_h = cargar_datos()
-t_g, t_n = st.tabs(["📋 GESTIÓN", "➕ NUEVO"])
 
-with t_g:
-    bq = st.text_input("🔍 BUSCAR:", placeholder="Escribe nombre...")
-    act = df_p[df_p["Estado"] == "ACTIVO"] if df_p is not None else pd.DataFrame()
-    if bq and not act.empty: act = act[act['Nombre'].str.contains(bq, case=False) | act['Cedula'].str.contains(bq)]
-    
-    if not act.empty:
+if df_p is not None:
+    t_g, t_n = st.tabs(["📋 GESTIÓN", "➕ NUEVO"])
+
+    with t_g:
+        bq = st.text_input("🔍 BUSCAR:", placeholder="Escribe nombre...")
+        act = df_p[df_p["Estado"] == "ACTIVO"]
+        if bq: act = act[act['Nombre'].str.contains(bq, case=False) | act['Cedula'].str.contains(bq)]
+        
         for idx, row in act.iterrows():
-            abierto = st.session_state.id_abierto == row['ID']
-            with st.expander(f"👤 {row['Nombre'].upper()} | 💰 SALDO: ${row['Saldo_Restante']}", expanded=abierto):
+            is_open = st.session_state.id_abierto == row['ID']
+            with st.expander(f"👤 {row['Nombre'].upper()} | 💰 SALDO: ${row['Saldo_Restante']}", expanded=is_open):
                 c1, c2 = st.columns(2)
                 with c1:
-                    st.write("### ℹ️ RESUMEN")
                     st.metric("CUOTA", f"${row['Cuota_Mensual']}")
                     st.metric("PAGOS", f"{row['Pagos_Realizados']}/{row['Meses_Totales']}")
                     h_c = df_h[df_h["ID_Prestamo"] == row['ID']] if df_h is not None else pd.DataFrame()
@@ -130,35 +128,28 @@ with t_g:
                         nc = st.number_input("Cuotas:", min_value=1, value=1)
                         ft = st.file_uploader("📸 RECIBO (OBLIGATORIO):", type=["jpg","png","jpeg"], key=f"foto_{row['ID']}_{st.session_state.pago_key}")
                         if st.form_submit_button("✅ CONFIRMAR", use_container_width=True, type="primary"):
-                            # VALIDACIÓN DE ARCHIVO
                             if ft is None:
-                                st.error("❌ ERROR: Debes cargar la foto del recibo para procesar el pago.")
+                                st.error("❌ ERROR: Carga la foto para procesar.")
                             else:
                                 st.session_state.id_abierto = row['ID']
-                                with st.spinner('Procesando...'):
-                                    url = subir_img(ft.getvalue())
-                                    new_pg = pd.DataFrame([{"ID_Prestamo": row['ID'], "Fecha_Pago": datetime.now().strftime("%Y-%m-%d %H:%M"), "Cuotas_Pagadas": nc, "Monto_Pagado": round(row['Cuota_Mensual']*nc, 2), "URL_Comprobante": url}])
-                                    conn.update(worksheet="Pagos", data=pd.concat([df_h, new_pg], ignore_index=True))
-                                    r_u = row.copy(); r_u["Pagos_Realizados"] += nc
-                                    r_u["Saldo_Restante"] = round(max(0, row["Saldo_Restante"] - (row["Monto_Inicial"]/row["Meses_Totales"])*nc), 2)
-                                    if r_u["Pagos_Realizados"] >= row["Meses_Totales"]: r_u["Estado"] = "PAGADO"
-                                    df_p.loc[idx] = r_u; conn.update(worksheet="Prestamos", data=df_p)
-                                    h_act = pd.concat([df_h, new_pg], ignore_index=True); exc_act = generar_excel(r_u, h_act[h_act["ID_Prestamo"] == row['ID']])
-                                    if ml: enviar_mail(ml, row['Nombre'], exc_act, url)
-                                    st.session_state.pago_key += 1
-                                    st.balloons(); time.sleep(0.5); st.rerun()
-                
-                if st.button("🗑️ ELIMINAR", key=f"del_{row['ID']}", use_container_width=True, type="secondary"):
-                    conn.update(worksheet="Prestamos", data=df_p[df_p["ID"] != row['ID']]); st.rerun()
+                                url = subir_img(ft.getvalue())
+                                new_pg = pd.DataFrame([{"ID_Prestamo": row['ID'], "Fecha_Pago": datetime.now().strftime("%Y-%m-%d %H:%M"), "Cuotas_Pagadas": nc, "Monto_Pagado": round(row['Cuota_Mensual']*nc, 2), "URL_Comprobante": url}])
+                                conn.update(worksheet="Pagos", data=pd.concat([df_h, new_pg], ignore_index=True))
+                                r_u = row.copy(); r_u["Pagos_Realizados"] += nc
+                                r_u["Saldo_Restante"] = round(max(0, row["Saldo_Restante"] - (row["Monto_Inicial"]/row["Meses_Totales"])*nc), 2)
+                                if r_u["Pagos_Realizados"] >= row["Meses_Totales"]: r_u["Estado"] = "PAGADO"
+                                df_p.loc[idx] = r_u; conn.update(worksheet="Prestamos", data=df_p)
+                                if ml: enviar_mail(ml, row['Nombre'], generar_excel(r_u, pd.concat([df_h, new_pg])), url)
+                                st.session_state.pago_key += 1
+                                st.balloons(); time.sleep(0.5); st.rerun()
 
-with t_n:
-    with st.form("n", clear_on_submit=True):
-        st.write("### 📝 REGISTRO")
-        nm, cd, ml = st.text_input("Nombre:"), st.text_input("Cédula:"), st.text_input("Correo:")
-        c1, c2, c3 = st.columns(3)
-        mn, ts, pz = c1.number_input("Monto:"), c3.number_input("Tasa %:"), c2.number_input("Meses:")
-        if st.form_submit_button("💾 GUARDAR", use_container_width=True, type="primary"):
-            tm = (ts/100)/12; cu = mn * (tm * (1+tm)**pz) / ((1+tm)**pz - 1) if tm > 0 else mn/pz
-            new = pd.DataFrame([{"ID": str(uuid.uuid4())[:8], "Fecha": datetime.now().strftime("%Y-%m-%d"), "Nombre": nm, "Cedula": cd, "Email": ml, "Monto_Inicial": mn, "Saldo_Restante": mn, "Cuota_Mensual": round(cu, 2), "Meses_Totales": int(pz), "Pagos_Realizados": 0, "Estado": "ACTIVO", "Tasa": ts}])
-            conn.update(worksheet="Prestamos", data=pd.concat([df_p, new], ignore_index=True))
-            st.balloons(); time.sleep(0.5); st.rerun()
+    with t_n:
+        with st.form("n", clear_on_submit=True):
+            nm, cd, ml = st.text_input("Nombre:"), st.text_input("Cédula:"), st.text_input("Correo:")
+            c1, c2, c3 = st.columns(3)
+            mn, ts, pz = c1.number_input("Monto:"), c3.number_input("Tasa %:"), c2.number_input("Meses:")
+            if st.form_submit_button("💾 GUARDAR", use_container_width=True, type="primary"):
+                tm = (ts/100)/12; cu = mn * (tm * (1+tm)**pz) / ((1+tm)**pz - 1) if tm > 0 else mn/pz
+                new = pd.DataFrame([{"ID": str(uuid.uuid4())[:8], "Fecha": datetime.now().strftime("%Y-%m-%d"), "Nombre": nm, "Cedula": cd, "Email": ml, "Monto_Inicial": mn, "Saldo_Restante": mn, "Cuota_Mensual": round(cu, 2), "Meses_Totales": int(pz), "Pagos_Realizados": 0, "Estado": "ACTIVO", "Tasa": ts}])
+                conn.update(worksheet="Prestamos", data=pd.concat([df_p, new], ignore_index=True))
+                st.balloons(); time.sleep(0.5); st.rerun()
