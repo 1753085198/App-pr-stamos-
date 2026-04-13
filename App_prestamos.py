@@ -96,7 +96,7 @@ def generar_excel(nombre, cedula, capital, meses, tasa_anual, df_tabla, id_clien
         archivos_imagenes.sort()
         
         fila_actual = 3
-        if no archivos_imagenes:
+        if not archivos_imagenes: # <-- Corrección de "no" por "not"
             hoja_comp["A3"] = "No hay comprobantes registrados aún."
         else:
             for ruta_img in archivos_imagenes:
@@ -165,7 +165,7 @@ with tab1:
 # PESTAÑA 2: LISTA
 with tab2:
     st.subheader("Base de datos")
-    if no df_prestamos.empty:
+    if not df_prestamos.empty: # <-- Corrección de "no" por "not"
         st.dataframe(df_prestamos[["Nombre", "Cedula", "Monto_Inicial", "Saldo_Restante", "Pagos_Realizados", "Estado"]], use_container_width=True)
 
 # PESTAÑA 3: EXCEL CON IMÁGENES
@@ -238,4 +238,3 @@ with tab4:
                 guardar_bd(df_prestamos)
                 st.success("¡Pago registrado!")
                 st.rerun()
-
