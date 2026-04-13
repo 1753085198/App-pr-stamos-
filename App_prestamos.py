@@ -10,10 +10,11 @@ import time
 from datetime import datetime
 
 # --- CONFIGURACIÓN DE SEGURIDAD Y NUBE ---
-ID_CARPETA_DRIVE = "TU_ID_DE_CARPETA_EN_DRIVE" # Recuerda poner aquí tu ID de carpeta
+# ¡AQUÍ ESTÁ TU ID DE DRIVE INTEGRADO!
+ID_CARPETA_DRIVE = "1TwmKxziawFk5qWTCy1De12adpIxEnOha"
 
 def obtener_servicio_drive():
-    info = st.secrets["connections"]["gsheets"] # <-- AQUÍ ESTÁ LA CORRECCIÓN
+    info = st.secrets["connections"]["gsheets"]
     creds = service_account.Credentials.from_service_account_info(info)
     return build('drive', 'v3', credentials=creds)
 
@@ -123,13 +124,14 @@ with tab4:
             cuotas_pagar = st.number_input("Número de cuotas a pagar hoy:", min_value=1, max_value=int(cliente_info['Meses_Totales'] - cliente_info['Pagos_Realizados']), value=1)
         with c2:
             st.write(f"### Total a recibir: ${round(float(cliente_info['Cuota_Mensual']) * cuotas_pagar, 2)}")
-            comprobante = st.file_uploader("Subir foto del pago a Google Drive:", type=["jpg", "png"])
+            comprobante = st.file_uploader("Subir foto del pago a Google Drive:", type=["jpg", "jpeg", "png"])
 
         if st.button("✅ Confirmar Pago Permanente", use_container_width=True):
             with st.spinner('Subiendo evidencia a Drive y actualizando Sheets...'):
                 # 1. Subir a Drive
                 if comprobante:
-                    subir_a_drive(comprobante.getvalue(), f"Recibo_{id_cliente}_{datetime.now().strftime('%Y%m%d')}.png")
+                    ext = comprobante.name.split('.')[-1] if '.' in comprobante.name else 'png'
+                    subir_a_drive(comprobante.getvalue(), f"Recibo_{id_cliente}_{datetime.now().strftime('%Y%m%d_%H%M')}.{ext}")
                 
                 # 2. Actualizar Sheets
                 idx = df_prestamos[df_prestamos["ID"] == id_cliente].index[0]
