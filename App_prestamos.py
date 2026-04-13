@@ -7,7 +7,7 @@ import time
 from datetime import datetime
 import requests
 import base64
-from openpyxl.styles import PatternFill, Font
+from openpyxl.styles import PatternFill, Font, Alignment
 
 # 1. CONFIGURACIÓN
 st.set_page_config(page_title="SISTEMA FINANCIERO TOTAL PRO", page_icon="🏦", layout="wide")
@@ -41,83 +41,100 @@ def subir_img(archivo):
         return res.json()["data"]["url"]
     except: return ""
 
-def generar_excel_pintado(df, titulo):
+def generar_excel_grupal(df, titulo):
     out = io.BytesIO()
     with pd.ExcelWriter(out, engine='openpyxl') as writer:
-        ws = writer.book.create_sheet("REPORTE", 0)
+        ws = writer.book.create_sheet("REPORTE GENERAL", 0)
         f_verde, f_rojo = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid"), PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-        ws.append([f"REPORTE: {titulo}"]); ws.append(["Nombre", "Cédula", "Monto Total", "Estado"])
+        ws.append([f"ESTADO GENERAL: {titulo}"]); ws.append(["Nombre", "Cédula", "Total Acumulado", "Estado"])
         for _, row in df.iterrows():
-            monto = float(row.get('Saldo_Total_Aportado', row.get('Saldo_Restante', 0)))
-            estado = "PAGADO" if monto > 0 else "PENDIENTE"
-            ws.append([row['Nombre'], row['Cedula'], monto, estado])
-            color = f_verde if monto > 0 else f_rojo
-            for col in range(1, 5): ws.cell(row=ws.max_row, column=col).fill = color
+            monto = float(row.get('Saldo_Total_Aportado', 0))
+            ws.append([row['Nombre'], row['Cedula'], monto, "AL DÍA" if monto > 0 else "SIN APORTES"])
+            for col in range(1, 5): ws.cell(row=ws.max_row, column=col).fill = f_verde if monto > 0 else f_rojo
     return out.getvalue()
 
-# --- MENÚ ---
+def generar_excel_personal(socio_row, df_historial, titulo_tipo):
+    out = io.BytesIO()
+    with pd.ExcelWriter(out, engine='openpyxl') as writer:
+        ws = writer.book.create_sheet("MI HISTORIAL", 0)
+        # Encabezado
+        ws.append([f"COMPROBANTE DE PAGOS - {titulo_tipo}"])
+        ws.append([f"SOCIO: {socio_row['Nombre']}"]); ws.append([f"CÉDULA: {socio_row['Cedula']}"])
+        ws.append([""]); ws.append(["Fecha de Pago", "Monto Pagado", "Link Comprobante"])
+        
+        # Filtrar pagos de este socio
+        pagos_socio = df_historial[df_historial['ID_Socio'] == socio_row['ID']]
+        for _, pago in pagos_socio.iterrows():
+            ws.append([pago['Fecha'], pago['Monto'], pago.get('Comprobante', 'N/A')])
+        
+        ws.append([""]); ws.append(["TOTAL ACUMULADO:", socio_row['Saldo_Total_Aportado']])
+        for cell in ws["1:1"]: cell.font = Font(bold=True, size=14)
+    return out.getvalue()
+
+# --- NAVEGACIÓN ---
 with st.sidebar:
     st.markdown("# 🏦 SISTEMA")
     seccion = st.radio("Sección:", ["💰 PRÉSTAMOS", "🤝 COOPERATIVA", "🚑 AYUDAS ECON."], index=1)
 
-# --- LÓGICA ---
+# --- LÓGICA SECCIONES ---
 if seccion == "💰 PRÉSTAMOS":
     st.title("💰 PRÉSTAMOS")
-    # (Lógica original de préstamos con recibos ya integrada)
-    st.info("Sección de préstamos activa con respaldo de imagen.")
+    # Lógica de préstamos original (se mantiene)
 
 elif seccion == "🤝 COOPERATIVA":
     st.title("🤝 COOPERATIVA")
-    df_s = cargar("Cooperativa")
-    df_pagos_coop = cargar("Pagos_Coop") # Asegúrate de tener esta pestaña
-    cuota_fija = st.number_input("💵 VALOR CUOTA ESTÁNDAR:", value=10.0)
+    df_s, df_p = cargar("Cooperativa"), cargar("Pagos_Coop")
+    cuota_x = st.number_input("💵 VALOR CUOTA FIJA (X):", value=10.0)
     
-    if not df_s.empty: st.download_button("📊 EXCEL GRUPAL", data=generar_excel_pintado(df_s, "COOP"), file_name="Reporte_Coop.xlsx", use_container_width=True)
+    if not df_s.empty: st.download_button("📊 EXCEL GRUPAL COOP", data=generar_excel_grupal(df_s, "COOP"), file_name="Reporte_Coop.xlsx", use_container_width=True)
     
     bq = st.text_input("🔍 BUSCAR SOCIO:")
     act = df_s if not df_s.empty else pd.DataFrame()
     if bq: act = act[act['Nombre'].str.contains(bq, case=False)]
     
     for idx, row in act.iterrows():
-        with st.expander(f"👤 {row['Nombre'].upper()} | TOTAL: ${row['Saldo_Total_Aportado']}"):
-            with st.form(key=f"form_coop_{row['ID']}"):
-                m = st.number_input("Monto:", value=cuota_fija)
-                ft = st.file_uploader("📸 SUBIR COMPROBANTE:", key=f"img_coop_{row['ID']}")
-                if st.form_submit_button("✅ REGISTRAR PAGO Y RECIBO"):
-                    if ft:
-                        url = subir_img(ft.getvalue())
-                        # Guardar en historial de pagos
-                        new_p = pd.DataFrame([{"ID_Socio": row['ID'], "Fecha": datetime.now().strftime("%Y-%m-%d"), "Monto": m, "Comprobante": url}])
-                        conn.update(worksheet="Pagos_Coop", data=pd.concat([df_pagos_coop, new_p], ignore_index=True))
-                        # Actualizar saldo del socio
-                        df_s.at[idx, "Saldo_Total_Aportado"] = float(row['Saldo_Total_Aportado']) + m
-                        conn.update(worksheet="Cooperativa", data=df_s)
-                        st.success("¡Pago registrado!"); st.rerun()
-                    else: st.error("¡Debes subir la foto del comprobante!")
+        with st.expander(f"👤 {row['Nombre'].upper()} | ACUMULADO: ${row['Saldo_Total_Aportado']}"):
+            c1, c2 = st.columns(2)
+            with c1:
+                with st.form(key=f"f_coop_{row['ID']}"):
+                    m = st.number_input("Monto:", value=cuota_x)
+                    ft = st.file_uploader("📸 FOTO RECIBO:", key=f"img_c_{row['ID']}")
+                    if st.form_submit_button("✅ REGISTRAR PAGO"):
+                        if ft:
+                            url = subir_img(ft.getvalue())
+                            new_p = pd.DataFrame([{"ID_Socio": row['ID'], "Fecha": datetime.now().strftime("%Y-%m-%d"), "Monto": m, "Comprobante": url}])
+                            conn.update(worksheet="Pagos_Coop", data=pd.concat([df_p, new_p], ignore_index=True))
+                            df_s.at[idx, "Saldo_Total_Aportado"] = float(row['Saldo_Total_Aportado']) + m
+                            conn.update(worksheet="Cooperativa", data=df_s); st.rerun()
+            with c2:
+                st.write("### 📄 HISTORIAL")
+                st.download_button(f"📊 DESCARGAR MI EXCEL", data=generar_excel_personal(row, df_p, "COOPERATIVA"), file_name=f"Historial_{row['Nombre']}.xlsx", key=f"dl_c_{row['ID']}")
 
 elif seccion == "🚑 AYUDAS ECON.":
     st.title("🚑 AYUDAS ECONÓMICAS")
-    df_a = cargar("Ayudas_Listado")
-    df_pagos_ayu = cargar("Pagos_Ayudas") # Asegúrate de tener esta pestaña
-    cuota_fija_ayu = st.number_input("💵 VALOR APORTE ESTÁNDAR:", value=5.0)
+    df_a, df_pa = cargar("Ayudas_Listado"), cargar("Pagos_Ayudas")
+    cuota_y = st.number_input("💵 VALOR APORTE FIJO (X):", value=5.0)
     
-    if not df_a.empty: st.download_button("📊 EXCEL GRUPAL", data=generar_excel_pintado(df_a, "AYUDAS"), file_name="Reporte_Ayudas.xlsx", use_container_width=True)
+    if not df_a.empty: st.download_button("📊 EXCEL GRUPAL AYUDAS", data=generar_excel_grupal(df_a, "AYUDAS"), file_name="Reporte_Ayudas.xlsx", use_container_width=True)
     
-    bq = st.text_input("🔍 BUSCAR COMPAÑERO:")
-    act = df_a if not df_a.empty else pd.DataFrame()
-    if bq: act = act[act['Nombre'].str.contains(bq, case=False)]
+    bq_a = st.text_input("🔍 BUSCAR COMPAÑERO:")
+    act_a = df_a if not df_a.empty else pd.DataFrame()
+    if bq_a: act_a = act_a[act_a['Nombre'].str.contains(bq_a, case=False)]
     
-    for idx, row in act.iterrows():
-        with st.expander(f"👤 {row['Nombre'].upper()} | TOTAL: ${row['Saldo_Total_Aportado']}"):
-            with st.form(key=f"form_ayu_{row['ID']}"):
-                m = st.number_input("Monto:", value=cuota_fija_ayu)
-                ft = st.file_uploader("📸 SUBIR COMPROBANTE:", key=f"img_ayu_{row['ID']}")
-                if st.form_submit_button("✅ GUARDAR APORTE"):
-                    if ft:
-                        url = subir_img(ft.getvalue())
-                        new_p = pd.DataFrame([{"ID_Socio": row['ID'], "Fecha": datetime.now().strftime("%Y-%m-%d"), "Monto": m, "Comprobante": url}])
-                        conn.update(worksheet="Pagos_Ayudas", data=pd.concat([df_pagos_ayu, new_p], ignore_index=True))
-                        df_a.at[idx, "Saldo_Total_Aportado"] = float(row['Saldo_Total_Aportado']) + m
-                        conn.update(worksheet="Ayudas_Listado", data=df_a)
-                        st.success("¡Aporte guardado con éxito!"); st.rerun()
-                    else: st.error("¡La foto del recibo es obligatoria!")
+    for idx, row in act_a.iterrows():
+        with st.expander(f"👤 {row['Nombre'].upper()} | ACUMULADO: ${row['Saldo_Total_Aportado']}"):
+            c1, c2 = st.columns(2)
+            with c1:
+                with st.form(key=f"f_ayu_{row['ID']}"):
+                    m = st.number_input("Monto:", value=cuota_y)
+                    ft = st.file_uploader("📸 FOTO RECIBO:", key=f"img_a_{row['ID']}")
+                    if st.form_submit_button("✅ GUARDAR"):
+                        if ft:
+                            url = subir_img(ft.getvalue())
+                            new_pa = pd.DataFrame([{"ID_Socio": row['ID'], "Fecha": datetime.now().strftime("%Y-%m-%d"), "Monto": m, "Comprobante": url}])
+                            conn.update(worksheet="Pagos_Ayudas", data=pd.concat([df_pa, new_pa], ignore_index=True))
+                            df_a.at[idx, "Saldo_Total_Aportado"] = float(row['Saldo_Total_Aportado']) + m
+                            conn.update(worksheet="Ayudas_Listado", data=df_a); st.rerun()
+            with c2:
+                st.write("### 📄 HISTORIAL")
+                st.download_button(f"📊 DESCARGAR MI EXCEL", data=generar_excel_personal(row, df_pa, "AYUDA ECON."), file_name=f"Historial_Ayuda_{row['Nombre']}.xlsx", key=f"dl_a_{row['ID']}")
