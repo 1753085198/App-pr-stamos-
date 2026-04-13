@@ -115,38 +115,38 @@ with t_g:
     
     if not act.empty:
         for idx, row in act.iterrows():
-            # EL TRUCO: Si este ID es el que guardamos como abierto, forzamos expanded=True
             abierto = st.session_state.id_abierto == row['ID']
             with st.expander(f"👤 {row['Nombre'].upper()} | 💰 SALDO: ${row['Saldo_Restante']}", expanded=abierto):
                 c1, c2 = st.columns(2)
                 with c1:
+                    st.write("### ℹ️ RESUMEN")
                     st.metric("CUOTA", f"${row['Cuota_Mensual']}")
                     st.metric("PAGOS", f"{row['Pagos_Realizados']}/{row['Meses_Totales']}")
                     h_c = df_h[df_h["ID_Prestamo"] == row['ID']] if df_h is not None else pd.DataFrame()
                     st.download_button("📥 EXCEL", data=generar_excel(row, h_c), file_name=f"Estado_{row['Nombre']}.xlsx", key=f"ex_{row['ID']}", use_container_width=True)
                 with c2:
-                    # Al entrar al formulario, avisamos que este cliente es el "abierto"
                     with st.form(key=f"f_{row['ID']}_{st.session_state.pago_key}"):
                         ml = st.text_input("Correo:", value=row.get('Email', ""))
                         nc = st.number_input("Cuotas:", min_value=1, value=1)
-                        ft = st.file_uploader("📸 RECIBO:", type=["jpg","png","jpeg"], key=f"foto_{row['ID']}_{st.session_state.pago_key}")
+                        ft = st.file_uploader("📸 RECIBO (OBLIGATORIO):", type=["jpg","png","jpeg"], key=f"foto_{row['ID']}_{st.session_state.pago_key}")
                         if st.form_submit_button("✅ CONFIRMAR", use_container_width=True, type="primary"):
-                            # GUARDAR EL ID ANTES DE REINICIAR
-                            st.session_state.id_abierto = row['ID']
-                            url = subir_img(ft.getvalue()) if ft else ""
-                            # Update Sheets
-                            new_pg = pd.DataFrame([{"ID_Prestamo": row['ID'], "Fecha_Pago": datetime.now().strftime("%Y-%m-%d %H:%M"), "Cuotas_Pagadas": nc, "Monto_Pagado": round(row['Cuota_Mensual']*nc, 2), "URL_Comprobante": url}])
-                            conn.update(worksheet="Pagos", data=pd.concat([df_h, new_pg], ignore_index=True))
-                            r_u = row.copy(); r_u["Pagos_Realizados"] += nc
-                            r_u["Saldo_Restante"] = round(max(0, row["Saldo_Restante"] - (row["Monto_Inicial"]/row["Meses_Totales"])*nc), 2)
-                            if r_u["Pagos_Realizados"] >= row["Meses_Totales"]: r_u["Estado"] = "PAGADO"
-                            df_p.loc[idx] = r_u; conn.update(worksheet="Prestamos", data=df_p)
-                            # Mail
-                            h_act = pd.concat([df_h, new_pg], ignore_index=True); exc_act = generar_excel(r_u, h_act[h_act["ID_Prestamo"] == row['ID']])
-                            if ml: enviar_mail(ml, row['Nombre'], exc_act, url)
-                            # Limpiar foto e irse
-                            st.session_state.pago_key += 1
-                            st.balloons(); time.sleep(0.5); st.rerun()
+                            # VALIDACIÓN DE ARCHIVO
+                            if ft is None:
+                                st.error("❌ ERROR: Debes cargar la foto del recibo para procesar el pago.")
+                            else:
+                                st.session_state.id_abierto = row['ID']
+                                with st.spinner('Procesando...'):
+                                    url = subir_img(ft.getvalue())
+                                    new_pg = pd.DataFrame([{"ID_Prestamo": row['ID'], "Fecha_Pago": datetime.now().strftime("%Y-%m-%d %H:%M"), "Cuotas_Pagadas": nc, "Monto_Pagado": round(row['Cuota_Mensual']*nc, 2), "URL_Comprobante": url}])
+                                    conn.update(worksheet="Pagos", data=pd.concat([df_h, new_pg], ignore_index=True))
+                                    r_u = row.copy(); r_u["Pagos_Realizados"] += nc
+                                    r_u["Saldo_Restante"] = round(max(0, row["Saldo_Restante"] - (row["Monto_Inicial"]/row["Meses_Totales"])*nc), 2)
+                                    if r_u["Pagos_Realizados"] >= row["Meses_Totales"]: r_u["Estado"] = "PAGADO"
+                                    df_p.loc[idx] = r_u; conn.update(worksheet="Prestamos", data=df_p)
+                                    h_act = pd.concat([df_h, new_pg], ignore_index=True); exc_act = generar_excel(r_u, h_act[h_act["ID_Prestamo"] == row['ID']])
+                                    if ml: enviar_mail(ml, row['Nombre'], exc_act, url)
+                                    st.session_state.pago_key += 1
+                                    st.balloons(); time.sleep(0.5); st.rerun()
                 
                 if st.button("🗑️ ELIMINAR", key=f"del_{row['ID']}", use_container_width=True, type="secondary"):
                     conn.update(worksheet="Prestamos", data=df_p[df_p["ID"] != row['ID']]); st.rerun()
