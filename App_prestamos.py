@@ -24,32 +24,19 @@ st.markdown("""
     <style>
     .stMarkdown p, label, .stSelectbox p, .stNumberInput label, .stTextInput label { font-size: 32px !important; font-weight: 700 !important; }
     input { font-size: 26px !important; height: 60px !important; }
-    
     .stButton>button[kind="primary"] { 
         font-size: 35px !important; font-weight: 900 !important; height: 7rem !important; 
         border-radius: 20px !important; background-color: #28a745 !important; color: white !important; 
     }
-    
     .stDownloadButton>button {
         font-size: 35px !important; font-weight: 900 !important; height: 7rem !important;
-        border-radius: 20px !important; background-color: #1D6F42 !important; 
-        color: white !important; border: none !important;
-        box-shadow: 0px 8px 15px rgba(29, 111, 66, 0.4) !important;
+        border-radius: 20px !important; background-color: #1D6F42 !important; color: white !important;
     }
-
     div.stButton > button:first-child[key^="btn_nuevo_circular"] {
-        background-color: #ff5722 !important;
-        color: white !important;
-        border-radius: 50% !important;
-        width: 120px !important;
-        height: 120px !important;
-        font-size: 60px !important;
-        position: fixed;
-        bottom: 40px;
-        right: 40px;
-        z-index: 9999;
+        background-color: #ff5722 !important; color: white !important;
+        border-radius: 50% !important; width: 120px !important; height: 120px !important;
+        font-size: 60px !important; position: fixed; bottom: 40px; right: 40px; z-index: 9999;
     }
-
     [data-testid="stMetricValue"] { font-size: 85px !important; font-weight: 900 !important; color: #007bff !important; }
     .streamlit-expanderHeader { font-size: 38px !important; font-weight: 800 !important; padding: 25px !important; }
     </style>
@@ -83,7 +70,6 @@ def subir_img(archivo):
 def generar_excel_pro(d_c, h_c):
     out = io.BytesIO()
     with pd.ExcelWriter(out, engine='openpyxl') as writer:
-        # HOJA 1: ESTADO GENERAL
         ws = writer.book.create_sheet("ESTADO DE CUENTA", 0)
         f_azul, f_verde = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid"), PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
         ws["A1"] = "ESTADO DE CUENTA BANCARIO"; ws["A1"].font = Font(bold=True, size=16)
@@ -106,35 +92,34 @@ def generar_excel_pro(d_c, h_c):
             if i <= pag:
                 for col in range(1, 5): ws.cell(row=r, column=col).fill = f_verde
 
-        # HOJA 2: COMPROBANTES (LO QUE FALTABA)
         ws_comp = writer.book.create_sheet("COMPROBANTES", 1)
-        ws_comp["A1"] = "REGISTRO DE FOTOS Y RECIBOS"; ws_comp["A1"].font = Font(bold=True, size=14)
-        h_comp = ["Fecha", "Monto", "Cuotas", "Link al Recibo"]
+        ws_comp["A1"] = "REGISTRO DE RECIBOS"; ws_comp["A1"].font = Font(bold=True, size=14)
+        h_comp = ["Fecha", "Monto", "Cuotas", "Link"]
         for c, t in enumerate(h_comp, 1):
             cell = ws_comp.cell(row=3, column=c, value=t)
             cell.fill = f_azul; cell.font = Font(color="FFFFFF", bold=True)
         
         if h_c is not None and not h_c.empty:
-            for r_idx, row in h_c.iterrows():
-                actual_row = ws_comp.max_row + 1
-                ws_comp.cell(row=actual_row, column=1, value=row['Fecha_Pago'])
-                ws_comp.cell(row=actual_row, column=2, value=row['Monto_Pagado'])
-                ws_comp.cell(row=actual_row, column=3, value=row['Cuotas_Pagadas'])
-                # Agregar Hipervínculo a la imagen
-                if 'URL_Comprobante' in row and row['URL_Comprobante']:
-                    link_cell = ws_comp.cell(row=actual_row, column=4, value="VER COMPROBANTE")
-                    link_cell.hyperlink = row['URL_Comprobante']
-                    link_cell.font = Font(color="0000FF", underline="single")
+            for r_idx, fila_h in h_c.reset_index(drop=True).iterrows():
+                r_num = r_idx + 4
+                ws_comp.cell(row=r_num, column=1, value=str(fila_h['Fecha_Pago']))
+                ws_comp.cell(row=r_num, column=2, value=fila_h['Monto_Pagado'])
+                ws_comp.cell(row=r_num, column=3, value=fila_h['Cuotas_Pagadas'])
+                # VALIDACIÓN CRÍTICA PARA HYPERLINK
+                url_val = fila_h.get('URL_Comprobante', "")
+                if pd.notnull(url_val) and str(url_val).startswith("http"):
+                    link_c = ws_comp.cell(row=r_num, column=4, value="VER RECIBO")
+                    link_c.hyperlink = str(url_val)
+                    link_c.font = Font(color="0000FF", underline="single")
         
         for w in writer.book.worksheets:
             for col in w.columns: w.column_dimensions[col[0].column_letter].width = 25
-
     return out.getvalue()
 
 def enviar_mail(dest, nom, exc, url):
     try:
-        msg = MIMEMultipart(); msg['From'] = st.secrets["EMAIL_USER"]; msg['To'] = dest; msg['Subject'] = f"✅ Reporte de Pago - {nom}"
-        msg.attach(MIMEText(f"Hola {nom}, adjunto tu reporte con el link de tu recibo: {url}", 'plain'))
+        msg = MIMEMultipart(); msg['From'] = st.secrets["EMAIL_USER"]; msg['To'] = dest; msg['Subject'] = f"✅ Comprobante - {nom}"
+        msg.attach(MIMEText(f"Hola {nom}, adjunto tu estado. Recibo: {url}", 'plain'))
         p = MIMEBase('application', 'octet-stream'); p.set_payload(exc); encoders.encode_base64(p)
         p.add_header('Content-Disposition', f"attachment; filename=Estado_{nom}.xlsx"); msg.attach(p)
         s = smtplib.SMTP('smtp.gmail.com', 587); s.starttls(); s.login(st.secrets["EMAIL_USER"], st.secrets["EMAIL_PASS"]); s.send_message(msg); s.quit()
@@ -180,14 +165,16 @@ if df_p is not None:
                     if st.form_submit_button("✅ CONFIRMAR"):
                         if ft:
                             st.session_state.id_abierto = row['ID']
-                            url = subir_img(ft.getvalue())
-                            new_p = pd.DataFrame([{"ID_Prestamo": row['ID'], "Fecha_Pago": datetime.now().strftime("%Y-%m-%d %H:%M"), "Cuotas_Pagadas": n_cuotas, "Monto_Pagado": round(row['Cuota_Mensual']*n_cuotas, 2), "URL_Comprobante": url}])
+                            url_img = subir_img(ft.getvalue())
+                            new_p = pd.DataFrame([{"ID_Prestamo": row['ID'], "Fecha_Pago": datetime.now().strftime("%Y-%m-%d %H:%M"), "Cuotas_Pagadas": n_cuotas, "Monto_Pagado": round(row['Cuota_Mensual']*n_cuotas, 2), "URL_Comprobante": url_img}])
                             conn.update(worksheet="Pagos", data=pd.concat([df_h, new_p], ignore_index=True))
                             row_upd = row.copy(); row_upd["Pagos_Realizados"] += n_cuotas; row_upd["Saldo_Restante"] = round(max(0, row["Saldo_Restante"] - (row["Monto_Inicial"]/row["Meses_Totales"])*n_cuotas), 2)
                             if row_upd["Pagos_Realizados"] >= row["Meses_Totales"]: row_upd["Estado"] = "PAGADO"
                             df_p.loc[idx] = row_upd; conn.update(worksheet="Prestamos", data=df_p)
-                            if correo: enviar_mail(correo, row['Nombre'], generar_excel_pro(row_upd, pd.concat([df_h, new_p])), url)
-                            st.session_state.pago_key += 1; st.rerun()
+                            # EXCEL CON DATOS NUEVOS
+                            exc_final = generar_excel_pro(row_upd, pd.concat([df_h, new_p]))
+                            if correo: enviar_mail(correo, row['Nombre'], exc_final, url_img)
+                            st.session_state.pago_key += 1; st.balloons(); time.sleep(0.5); st.rerun()
             
             if st.button(f"🗑️ ELIMINAR {row['Nombre'].split()[0]}", key=f"del_{row['ID']}", use_container_width=True):
                 conn.update(worksheet="Prestamos", data=df_p[df_p["ID"] != row['ID']]); st.rerun()
