@@ -8,30 +8,25 @@ from datetime import datetime
 import requests
 import base64
 from PIL import Image
+from openpyxl.styles import PatternFill, Font, Alignment
 
 # 1. CONFIGURACIÓN DE PÁGINA
 st.set_page_config(page_title="CONTROL DE PRESTAMOS", page_icon="🏦", layout="wide")
 
-# 2. CSS PARA INTERFAZ SÚPER GIGANTE Y JERARQUÍA VISUAL
+# 2. CSS PARA INTERFAZ GIGANTE
 st.markdown("""
     <style>
     button[data-baseweb="tab"] { font-size: 30px !important; font-weight: 700 !important; padding: 1.5rem !important; }
     .stMarkdown p, label, .stSelectbox p, .stNumberInput label, .stTextInput label { font-size: 26px !important; font-weight: 600 !important; }
-    
-    /* BOTONES LLAMATIVOS (Verde Acción) */
     .stButton>button[kind="primary"], .stDownloadButton>button { 
         font-size: 30px !important; font-weight: 900 !important; height: 6rem !important; 
         border-radius: 15px !important; background-color: #28a745 !important; color: white !important; 
         border: none !important; box-shadow: 0px 5px 15px rgba(0,0,0,0.3) !important;
     }
-
-    /* BOTÓN DISCRETO (Eliminar) */
     .stButton>button[kind="secondary"] { 
         font-size: 18px !important; background-color: transparent !important; 
         color: #dc3545 !important; border: 1px solid #dc3545 !important; opacity: 0.6;
     }
-
-    /* Métricas Gigantes */
     [data-testid="stMetricValue"] { font-size: 70px !important; color: #007bff !important; font-weight: 800 !important; }
     [data-testid="stMetricLabel"] { font-size: 26px !important; font-weight: bold !important; }
     .stDataFrame { font-size: 24px !important; }
@@ -69,32 +64,40 @@ def subir_a_imgbb_comprimido(archivo_bytes):
         return res.json()["data"]["url"] if res.status_code == 200 else ""
     except: return ""
 
-# 5. GENERADOR DE EXCEL CON DISEÑO Y COLORES
+# 5. GENERADOR DE EXCEL CORREGIDO (Sin PIL.Image.open en la lógica de celdas)
 def generar_excel_con_estilo(datos_c, historial_c):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        # Resumen
+        # Hoja de Resumen
         resumen = pd.DataFrame([datos_c])
         resumen.to_excel(writer, sheet_name="RESUMEN", index=False)
-        # Historial
+        
+        # Hoja de Historial
         if not historial_c.empty:
             historial_c.to_excel(writer, sheet_name="PAGOS_DETALLE", index=False)
         
-        # Aplicar estilos básicos (Colores)
         workbook = writer.book
+        header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+        header_font = Font(color="FFFFFF", bold=True, size=12)
+        center_align = Alignment(horizontal="center")
+        
         for sheet in workbook.sheetnames:
             worksheet = workbook[sheet]
-            for cell in worksheet[1]: # Encabezados en azul y blanco
-                cell.fill = Image.open(io.BytesIO()).convert("RGB") # Placeholder para lógica de color
-                from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
-                header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+            # Estilizar encabezados
+            for cell in worksheet[1]:
                 cell.fill = header_fill
-                cell.font = Font(color="FFFFFF", bold=True, size=12)
-                cell.alignment = Alignment(horizontal="center")
-            # Auto-ajustar columnas
+                cell.font = header_font
+                cell.alignment = center_align
+            # Auto-ajustar ancho de columnas
             for col in worksheet.columns:
-                max_length = max(len(str(cell.value)) for cell in col)
-                worksheet.column_dimensions[col[0].column_letter].width = max_length + 2
+                max_length = 0
+                column = col[0].column_letter
+                for cell in col:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except: pass
+                worksheet.column_dimensions[column].width = max_length + 4
     return output.getvalue()
 
 # --- INTERFAZ ---
