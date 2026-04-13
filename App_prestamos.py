@@ -14,26 +14,36 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 # 1. CONFIGURACIÓN DE PÁGINA
 st.set_page_config(page_title="CONTROL DE PRESTAMOS", page_icon="🏦", layout="wide")
 
-# 2. CSS PARA INTERFAZ GIGANTE
+# 2. CSS PARA INTERFAZ GIGANTE Y PROFESIONAL
 st.markdown("""
     <style>
-    button[data-baseweb="tab"] { font-size: 30px !important; font-weight: 700 !important; padding: 1.5rem !important; }
-    .stMarkdown p, label, .stSelectbox p, .stNumberInput label, .stTextInput label { font-size: 26px !important; font-weight: 600 !important; }
+    /* Pestañas Gigantes */
+    button[data-baseweb="tab"] { font-size: 28px !important; font-weight: 700 !important; padding: 1.2rem !important; }
+    
+    /* Etiquetas de texto y campos */
+    .stMarkdown p, label, .stSelectbox p, .stNumberInput label, .stTextInput label { 
+        font-size: 24px !important; font-weight: 600 !important; 
+    }
+    
+    /* BOTONES DE ACCIÓN (Verde Dinero) */
     .stButton>button[kind="primary"], .stDownloadButton>button { 
         font-size: 30px !important; font-weight: 900 !important; height: 6rem !important; 
-        border-radius: 15px !important; background-color: #28a745 !important; color: white !important; 
-        border: none !important; box-shadow: 0px 5px 15px rgba(0,0,0,0.3) !important;
+        border-radius: 18px !important; background-color: #28a745 !important; color: white !important; 
+        box-shadow: 0px 6px 15px rgba(0,0,0,0.2) !important;
     }
+
+    /* Botón Eliminar (Discreto y Elegante) */
     .stButton>button[kind="secondary"] { 
         font-size: 18px !important; background-color: transparent !important; 
-        color: #dc3545 !important; border: 1px solid #dc3545 !important; opacity: 0.6;
+        color: #dc3545 !important; border: 1px solid #dc3545 !important; opacity: 0.5;
     }
-    [data-testid="stMetricValue"] { font-size: 70px !important; color: #007bff !important; font-weight: 800 !important; }
-    [data-testid="stMetricLabel"] { font-size: 26px !important; font-weight: bold !important; }
-    .stDataFrame { font-size: 24px !important; }
+    
+    /* Métricas de Saldo */
+    [data-testid="stMetricValue"] { font-size: 65px !important; font-weight: 800 !important; color: #007bff !important; }
     </style>
 """, unsafe_allow_html=True)
 
+# 3. CONEXIÓN A GOOGLE SHEETS
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def cargar_prestamos():
@@ -42,6 +52,7 @@ def cargar_prestamos():
         if not df.empty:
             df["Cedula"] = df["Cedula"].astype(str).str.replace(".0", "", regex=False)
             df["ID"] = df["ID"].astype(str).str.replace(".0", "", regex=False)
+            df["Nombre"] = df["Nombre"].astype(str)
         return df
     except: return pd.DataFrame(columns=["ID", "Fecha", "Nombre", "Cedula", "Monto_Inicial", "Saldo_Restante", "Cuota_Mensual", "Meses_Totales", "Pagos_Realizados", "Estado", "Tasa"])
 
@@ -52,6 +63,7 @@ def cargar_historial_pagos():
         return df
     except: return pd.DataFrame(columns=["ID_Prestamo", "Fecha_Pago", "Cuotas_Pagadas", "Monto_Pagado", "URL_Comprobante"])
 
+# 4. MOTOR TURBO: COMPRESIÓN DE IMAGEN
 def subir_a_imgbb_comprimido(archivo_bytes):
     try:
         imagen = Image.open(io.BytesIO(archivo_bytes))
@@ -65,102 +77,122 @@ def subir_a_imgbb_comprimido(archivo_bytes):
         return res.json()["data"]["url"] if res.status_code == 200 else ""
     except: return ""
 
+# 5. GENERADOR DE EXCEL PROFESIONAL
 def generar_excel_estado_cuenta(datos_c, historial_c):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         ws_name = "ESTADO DE CUENTA"
         pd.DataFrame().to_excel(writer, sheet_name=ws_name)
-        workbook = writer.book
-        ws = workbook[ws_name]
-        font_titulo = Font(bold=True, size=14, color="1F4E78")
-        font_header = Font(bold=True, color="FFFFFF")
+        workbook = writer.book; ws = workbook[ws_name]
+        
+        # Estilos
         fill_azul = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
-        fill_verde = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+        font_header = Font(color="FFFFFF", bold=True); fill_verde = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
         font_verde = Font(color="006100", bold=True)
-        ws["A1"] = "ESTADO DE CUENTA DETALLADO"; ws["A1"].font = Font(bold=True, size=16)
+
+        # Encabezado de identidad
+        ws["A1"] = "ESTADO DE CUENTA"; ws["A1"].font = Font(bold=True, size=16)
         ws["A3"] = "CLIENTE:"; ws["B3"] = datos_c['Nombre'].upper()
         ws["A4"] = "CÉDULA:"; ws["B4"] = datos_c['Cedula']
-        ws["D3"] = "MONTO TOTAL:"; ws["E3"] = f"${datos_c['Monto_Inicial']}"
+        ws["D3"] = "MONTO:"; ws["E3"] = f"${datos_c['Monto_Inicial']}"
         ws["D4"] = "SALDO ACTUAL:"; ws["E4"] = f"${datos_c['Saldo_Restante']}"
-        ws["A8"] = "PLAN DE PAGOS Y SEGUIMIENTO"; ws["A8"].font = font_titulo
-        headers = ["N° Cuota", "Descripción", "Valor Cuota", "Estado de Pago"]
-        for col_num, header in enumerate(headers, 1):
-            cell = ws.cell(row=9, column=col_num); cell.value = header; cell.fill = fill_azul; cell.font = font_header; cell.alignment = Alignment(horizontal="center")
-        pagados = int(datos_c['Pagos_Realizados'])
+
+        # Tabla de Amortización
+        headers = ["Cuota #", "Detalle", "Valor Cuota", "Estado"]
+        for col_num, h in enumerate(headers, 1):
+            cell = ws.cell(row=7, column=col_num); cell.value = h; cell.fill = fill_azul; cell.font = font_header; cell.alignment = Alignment(horizontal="center")
+        
+        pag = int(datos_c['Pagos_Realizados'])
         for i in range(1, int(datos_c['Meses_Totales']) + 1):
-            row_num = 9 + i
-            ws.cell(row=row_num, column=1, value=i); ws.cell(row=row_num, column=2, value=f"Cuota mes {i}"); ws.cell(row=row_num, column=3, value=datos_c['Cuota_Mensual'])
-            est = "PAGADO" if i <= pagados else "PENDIENTE"
-            ws.cell(row=row_num, column=4, value=est)
-            if i <= pagados:
-                for col in range(1, 5): ws.cell(row=row_num, column=col).fill = fill_verde; ws.cell(row=row_num, column=col).font = font_verde
+            r = 7 + i
+            ws.cell(row=r, column=1, value=i); ws.cell(row=r, column=2, value=f"Cuota mes {i}"); ws.cell(row=r, column=3, value=datos_c['Cuota_Mensual'])
+            est = "PAGADO" if i <= pag else "PENDIENTE"
+            ws.cell(row=r, column=4, value=est)
+            if i <= pag:
+                for col in range(1, 5): ws.cell(row=r, column=col).fill = fill_verde; ws.cell(row=r, column=col).font = font_verde
+        
         ws.column_dimensions['B'].width = 30
         if not historial_c.empty:
-            hist_ws = workbook.create_sheet("HISTORIAL DE ABONOS")
-            for r in dataframe_to_rows(historial_c, index=False, header=True): hist_ws.append(r)
+            h_ws = workbook.create_sheet("HISTORIAL DE ABONOS")
+            for r in dataframe_to_rows(historial_c, index=False, header=True): h_ws.append(r)
     return output.getvalue()
 
 # --- INTERFAZ ---
 st.title("🏦 CONTROL DE PRESTAMOS")
+
 df_p = cargar_prestamos(); df_h = cargar_historial_pagos()
-t1, t2, t3, t4 = st.tabs(["➕ NUEVO", "📋 LISTA", "🔍 REPORTE", "💵 PAGAR"])
 
+t1, t2, t3, t4 = st.tabs(["💵 REGISTRAR PAGO", "➕ NUEVO CLIENTE", "📋 LISTA", "📊 REPORTE"])
+
+# TAB 1: PAGAR
 with t1:
-    with st.form("f", clear_on_submit=True):
-        nom = st.text_input("👤 NOMBRE DEL CLIENTE:"); ced = st.text_input("🪪 CÉDULA:")
-        c1, c2, c3 = st.columns(3)
-        mon = c1.number_input("💵 MONTO ($):", value=500.0); mes = c2.number_input("📅 MESES:", value=12); tas = c3.number_input("📈 TASA %:", value=15.0)
-        if st.form_submit_button("💾 GUARDAR PRÉSTAMO", use_container_width=True, type="primary"):
-            if nom and ced:
-                tm = (tas/100)/12
-                cuo = mon * (tm * (1+tm)**mes) / ((1+tm)**mes - 1) if tm > 0 else mon/mes
-                nuevo = pd.DataFrame([{"ID": str(uuid.uuid4())[:8], "Fecha": datetime.now().strftime("%Y-%m-%d"), "Nombre": nom, "Cedula": str(ced), "Monto_Inicial": mon, "Saldo_Restante": mon, "Cuota_Mensual": round(cuo, 2), "Meses_Totales": mes, "Pagos_Realizados": 0, "Estado": "ACTIVO", "Tasa": tas}])
-                conn.update(worksheet="Prestamos", data=pd.concat([df_p, nuevo], ignore_index=True))
-                st.balloons(); time.sleep(1); st.rerun()
-
-with t2:
-    st.dataframe(df_p[df_p["Estado"] == "ACTIVO"], use_container_width=True, height=500)
-
-with t3:
-    if not df_p.empty:
-        sel = st.selectbox("SELECCIONE CLIENTE:", df_p["Nombre"].astype(str) + " (" + df_p["ID"].astype(str) + ")")
-        id_s = sel.split("(")[1].replace(")", ""); dat = df_p[df_p["ID"] == id_s].iloc[0]; his = df_h[df_h["ID_Prestamo"] == id_s]
-        c1, c2, c3 = st.columns(3)
-        c1.metric("DEUDA", f"${dat['Saldo_Restante']}"); c2.metric("PROGRESO", f"{dat['Pagos_Realizados']}/{dat['Meses_Totales']}"); c3.metric("CUOTA", f"${dat['Cuota_Mensual']}")
-        st.dataframe(his, use_container_width=True, column_config={"URL_Comprobante": st.column_config.LinkColumn("📸 VER FOTO")})
-        st.download_button(f"📥 GENERAR REPORTE PARA {dat['Nombre'].upper()}", data=generar_excel_estado_cuenta(dat, his), file_name=f"ESTADO_CUENTA_{dat['Nombre'].replace(' ','_')}.xlsx", use_container_width=True)
-        if st.button("Eliminar este registro", type="secondary"):
-            conn.update(worksheet="Prestamos", data=df_p[df_p["ID"] != id_s])
-            conn.update(worksheet="Pagos", data=df_h[df_h["ID_Prestamo"] != id_s])
-            st.rerun()
-
-with t4:
     act = df_p[df_p["Estado"] == "ACTIVO"]
     if not act.empty:
-        # Usamos una clave de formulario única para forzar el reinicio visual
-        if 'form_key' not in st.session_state: st.session_state.form_key = 0
-        
-        with st.form(key=f"pago_form_{st.session_state.form_key}", clear_on_submit=True):
-            ps = st.selectbox("¿QUIÉN PAGA?", act["Nombre"].astype(str) + " (" + act["ID"].astype(str) + ")")
-            idp = ps.split("(")[1].replace(")", ""); cl = act[act[ "ID" ] == idp].iloc[0]
-            cp1, cp2 = st.columns(2)
-            ncuo = cp1.number_input("NÚMERO DE CUOTAS:", min_value=1, value=1)
-            st.success(f"### TOTAL A COBRAR: ${round(cl['Cuota_Mensual'] * ncuo, 2)}")
-            fot = cp2.file_uploader("📸 FOTO DEL RECIBO:", type=["jpg","png","jpeg"])
+        if 'pago_key' not in st.session_state: st.session_state.pago_key = 0
+        with st.form(key=f"form_pago_{st.session_state.pago_key}", clear_on_submit=True):
+            ps = st.selectbox("🎯 SELECCIONA CLIENTE:", act["Nombre"].astype(str) + " (" + act["ID"].astype(str) + ")")
+            idp = ps.split("(")[1].replace(")", ""); cl = act[act["ID"] == idp].iloc[0]
             
-            if st.form_submit_button("✅ CONFIRMAR PAGO AHORA", use_container_width=True, type="primary"):
+            st.info(f"### Saldo Actual: ${cl['Saldo_Restante']}")
+            
+            c1, c2 = st.columns(2)
+            n_c = c1.number_input("¿Cuántas cuotas cobra?", min_value=1, value=1)
+            st.success(f"## TOTAL: ${round(cl['Cuota_Mensual'] * n_c, 2)}")
+            fot = c2.file_uploader("📸 Foto del Recibo:", type=["jpg","png","jpeg"])
+            
+            if st.form_submit_button("✅ CONFIRMAR PAGO", use_container_width=True, type="primary"):
                 with st.spinner('Procesando...'):
                     link = subir_a_imgbb_comprimido(fot.getvalue()) if fot else ""
-                    np = pd.DataFrame([{"ID_Prestamo": idp, "Fecha_Pago": datetime.now().strftime("%Y-%m-%d %H:%M"), "Cuotas_Pagadas": ncuo, "Monto_Pagado": round(cl['Cuota_Mensual'] * ncuo, 2), "URL_Comprobante": link}])
+                    # Registro en historial
+                    np = pd.DataFrame([{"ID_Prestamo": idp, "Fecha_Pago": datetime.now().strftime("%Y-%m-%d %H:%M"), "Cuotas_Pagadas": n_c, "Monto_Pagado": round(cl['Cuota_Mensual'] * n_c, 2), "URL_Comprobante": link}])
                     conn.update(worksheet="Pagos", data=pd.concat([df_h, np], ignore_index=True))
+                    # Actualización de saldo
                     idx = df_p[df_p["ID"] == idp].index[0]
-                    df_p.at[idx, "Pagos_Realizados"] += ncuo
-                    df_p.at[idx, "Saldo_Restante"] = round(max(0, cl["Saldo_Restante"] - (cl["Monto_Inicial"]/cl["Meses_Totales"])*ncuo), 2)
+                    df_p.at[idx, "Pagos_Realizados"] += n_c
+                    df_p.at[idx, "Saldo_Restante"] = round(max(0, cl["Saldo_Restante"] - (cl["Monto_Inicial"]/cl["Meses_Totales"])*n_c), 2)
                     if df_p.at[idx, "Pagos_Realizados"] >= cl["Meses_Totales"]: df_p.at[idx, "Estado"] = "PAGADO"
                     conn.update(worksheet="Prestamos", data=df_p)
                     
-                    # CAMBIO CLAVE: Reiniciamos el formulario para que la foto desaparezca
-                    st.session_state.form_key += 1
-                    st.balloons()
-                    time.sleep(1)
-                    st.rerun()
+                    st.session_state.pago_key += 1 # Reset visual
+                    st.balloons(); time.sleep(1); st.rerun()
+
+# TAB 2: NUEVO CLIENTE
+with t2:
+    with st.form("f_nuevo", clear_on_submit=True):
+        n = st.text_input("👤 Nombre:"); c = st.text_input("🪪 Cédula:")
+        col1, col2, col3 = st.columns(3)
+        m = col1.number_input("Monto ($)", value=500.0); ms = col2.number_input("Plazo (Meses)", value=12); ts = col3.number_input("Tasa %", value=15.0)
+        if st.form_submit_button("💾 GUARDAR NUEVO PRESTAMO", use_container_width=True, type="primary"):
+            tm = (ts/100)/12
+            cuo = m * (tm * (1+tm)**ms) / ((1+tm)**ms - 1) if tm > 0 else m/ms
+            nuevo = pd.DataFrame([{"ID": str(uuid.uuid4())[:8], "Fecha": datetime.now().strftime("%Y-%m-%d"), "Nombre": n, "Cedula": c, "Monto_Inicial": m, "Saldo_Restante": m, "Cuota_Mensual": round(cuo, 2), "Meses_Totales": int(ms), "Pagos_Realizados": 0, "Estado": "ACTIVO", "Tasa": ts}])
+            conn.update(worksheet="Prestamos", data=pd.concat([df_p, nuevo], ignore_index=True))
+            st.balloons(); time.sleep(1); st.rerun()
+
+# TAB 3: LISTA
+with t3:
+    st.dataframe(df_p[df_p["Estado"] == "ACTIVO"], use_container_width=True, height=500)
+
+# TAB 4: REPORTES Y BORRADO
+with t4:
+    if not df_p.empty:
+        op = df_p["Nombre"].astype(str) + " (" + df_p["ID"].astype(str) + ")"
+        sel = st.selectbox("🔍 BUSCAR CLIENTE:", op)
+        ids = sel.split("(")[1].replace(")", ""); d = df_p[df_p["ID"] == ids].iloc[0]; h = df_h[df_h["ID_Prestamo"] == ids]
+        
+        c1, c2, c3 = st.columns(3)
+        c1.metric("DEUDA ACTUAL", f"${d['Saldo_Restante']}")
+        c2.metric("PROGRESO", f"{d['Pagos_Realizados']}/{d['Meses_Totales']}")
+        c3.metric("CUOTA", f"${d['Cuota_Mensual']}")
+        
+        st.write("---")
+        st.download_button(f"📥 DESCARGAR ESTADO DE CUENTA: {d['Nombre']}", data=generar_excel_estado_cuenta(d, h), file_name=f"Reporte_{d['Nombre']}.xlsx", use_container_width=True)
+        
+        st.write("### Historial de Fotos")
+        st.dataframe(h, use_container_width=True, column_config={"URL_Comprobante": st.column_config.LinkColumn("📸 Ver Recibo")})
+        
+        st.write("---")
+        if st.button(f"Eliminar a {d['Nombre']} del sistema", type="secondary"):
+            conn.update(worksheet="Prestamos", data=df_p[df_p["ID"] != ids])
+            conn.update(worksheet="Pagos", data=df_h[df_h["ID_Prestamo"] != ids])
+            st.rerun()
