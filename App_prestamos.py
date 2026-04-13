@@ -17,35 +17,20 @@ st.set_page_config(page_title="CONTROL DE PRESTAMOS PRO", page_icon="🏦", layo
 # 2. CSS PARA INTERFAZ ULTRA-GIGANTE (+50%)
 st.markdown("""
     <style>
-    /* Pestañas Superiores */
     button[data-baseweb="tab"] { font-size: 40px !important; font-weight: 900 !important; height: 100px !important; }
-    
-    /* Textos, Etiquetas y Formularios */
     .stMarkdown p, label, .stSelectbox p, .stNumberInput label, .stTextInput label { 
         font-size: 32px !important; font-weight: 700 !important; line-height: 1.5 !important;
     }
-    
-    /* Inputs de texto y números */
     input { font-size: 30px !important; height: 70px !important; }
-    
-    /* BOTONES DE ACCIÓN MEGA GIGANTES */
     .stButton>button[kind="primary"], .stDownloadButton>button { 
         font-size: 40px !important; font-weight: 900 !important; height: 8rem !important; 
         border-radius: 25px !important; background-color: #28a745 !important; color: white !important; 
         box-shadow: 0px 10px 20px rgba(0,0,0,0.4) !important;
     }
-    
-    /* Botón Eliminar Discreto pero más grande */
     .stButton>button[kind="secondary"] { font-size: 22px !important; height: 4rem !important; }
-
-    /* Métricas Gigantes */
     [data-testid="stMetricValue"] { font-size: 90px !important; font-weight: 900 !important; color: #007bff !important; }
     [data-testid="stMetricLabel"] { font-size: 35px !important; }
-
-    /* Expanders de la Lista (Cards) */
     .streamlit-expanderHeader { font-size: 38px !important; font-weight: 800 !important; padding: 25px !important; }
-    
-    /* Dataframes */
     .stDataFrame { font-size: 28px !important; }
     </style>
 """, unsafe_allow_html=True)
@@ -53,21 +38,32 @@ st.markdown("""
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def cargar_prestamos():
+    columnas_necesarias = ["ID", "Fecha", "Nombre", "Cedula", "Monto_Inicial", "Saldo_Restante", "Cuota_Mensual", "Meses_Totales", "Pagos_Realizados", "Estado", "Tasa"]
     try:
         df = conn.read(worksheet="Prestamos", ttl="0") 
-        if not df.empty:
-            df["Cedula"] = df["Cedula"].astype(str).str.replace(".0", "", regex=False)
-            df["ID"] = df["ID"].astype(str).str.replace(".0", "", regex=False)
-            df["Nombre"] = df["Nombre"].astype(str)
+        if df is None or df.empty:
+            return pd.DataFrame(columns=columnas_necesarias)
+        # Verificamos si falta alguna columna y la agregamos vacía
+        for col in columnas_necesarias:
+            if col not in df.columns:
+                df[col] = ""
+        # Limpieza de datos
+        df["Cedula"] = df["Cedula"].astype(str).str.replace(".0", "", regex=False)
+        df["ID"] = df["ID"].astype(str).str.replace(".0", "", regex=False)
+        df["Nombre"] = df["Nombre"].astype(str)
         return df
-    except: return pd.DataFrame(columns=["ID", "Fecha", "Nombre", "Cedula", "Monto_Inicial", "Saldo_Restante", "Cuota_Mensual", "Meses_Totales", "Pagos_Realizados", "Estado", "Tasa"])
+    except:
+        return pd.DataFrame(columns=columnas_necesarias)
 
 def cargar_historial_pagos():
+    cols_pagos = ["ID_Prestamo", "Fecha_Pago", "Cuotas_Pagadas", "Monto_Pagado", "URL_Comprobante"]
     try:
         df = conn.read(worksheet="Pagos", ttl="0")
-        if not df.empty: df["ID_Prestamo"] = df["ID_Prestamo"].astype(str)
+        if df is None or df.empty:
+            return pd.DataFrame(columns=cols_pagos)
         return df
-    except: return pd.DataFrame(columns=["ID_Prestamo", "Fecha_Pago", "Cuotas_Pagadas", "Monto_Pagado", "URL_Comprobante"])
+    except:
+        return pd.DataFrame(columns=cols_pagos)
 
 def subir_a_imgbb_comprimido(archivo_bytes):
     try:
@@ -97,7 +93,7 @@ def generar_excel_estado_cuenta(datos_c, historial_c):
         for c_idx, text in enumerate(h, 1):
             cell = ws.cell(row=7, column=c_idx, value=text)
             cell.fill = f_azul; cell.font = Font(color="FFFFFF", bold=True)
-        pag = int(datos_c['Pagos_Realizados'])
+        pag = int(datos_c['Pagos_Realizados']) if str(datos_c['Pagos_Realizados']).isdigit() else 0
         for i in range(1, int(datos_c['Meses_Totales']) + 1):
             r_idx = 7 + i
             ws.cell(row=r_idx, column=1, value=i); ws.cell(row=r_idx, column=2, value=f"Cuota mes {i}")
@@ -118,12 +114,17 @@ t_gestion, t_nuevo = st.tabs(["📋 GESTIÓN", "➕ NUEVO"])
 with t_gestion:
     busqueda = st.text_input("🔍 BUSCAR POR NOMBRE:", placeholder="ESCRIBE AQUÍ...")
     
-    activos = df_p[df_p["Estado"] == "ACTIVO"]
+    # Verificación de seguridad para la columna Estado
+    if "Estado" in df_p.columns:
+        activos = df_p[df_p["Estado"] == "ACTIVO"]
+    else:
+        activos = pd.DataFrame()
+
     if busqueda:
         activos = activos[activos['Nombre'].str.contains(busqueda, case=False) | activos['Cedula'].str.contains(busqueda)]
 
     if activos.empty:
-        st.warning("No hay registros.")
+        st.warning("No hay registros activos. Crea uno nuevo o revisa los encabezados de tu Excel.")
     else:
         for index, row_data in activos.iterrows():
             with st.expander(f"👤 {row_data['Nombre'].upper()}  |  💰 SALDO: ${row_data['Saldo_Restante']}"):
@@ -131,7 +132,7 @@ with t_gestion:
                 with col_a:
                     st.write("### ℹ️ DETALLES")
                     st.metric("CUOTA MENSUAL", f"${row_data['Cuota_Mensual']}")
-                    st.metric("PAGOS REALIZADOS", f"{row_data['Pagos_Realizados']}/{row_data['Meses_Totales']}")
+                    st.metric("PAGOS", f"{row_data['Pagos_Realizados']}/{row_data['Meses_Totales']}")
                     h_c = df_h[df_h["ID_Prestamo"] == row_data['ID']]
                     st.download_button(f"📥 EXCEL: {str(row_data['Nombre']).split()[0]}", data=generar_excel_estado_cuenta(row_data, h_c), file_name=f"Reporte_{str(row_data['Nombre']).replace(' ','_')}.xlsx", key=f"ex_{row_data['ID']}", use_container_width=True)
 
