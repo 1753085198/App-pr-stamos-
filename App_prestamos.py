@@ -17,7 +17,7 @@ from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.utils.dataframe import dataframe_to_rows
 
 # 1. CONFIGURACIÓN
-st.set_page_config(page_title="SISTEMA PRO", page_icon="🏦", layout="wide")
+st.set_page_config(page_title="SISTEMA FINANCIERO PRO", page_icon="🏦", layout="wide")
 
 # 2. CSS PERSONALIZADO
 st.markdown("""
@@ -44,6 +44,7 @@ st.markdown("""
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
+# --- MEMORIA DE SESIÓN ---
 if 'pago_key' not in st.session_state: st.session_state.pago_key = 0
 if 'id_abierto' not in st.session_state: st.session_state.id_abierto = None
 if 'mostrar_nuevo' not in st.session_state: st.session_state.mostrar_nuevo = False
@@ -100,7 +101,7 @@ def generar_excel_pro(d_c, h_c):
             cell.fill = f_azul; cell.font = Font(color="FFFFFF", bold=True)
         
         if h_c is not None and not h_c.empty:
-            # FILTRAR SOLO LOS PAGOS DE ESTA PERSONA
+            # FILTRO ESTRICTO: Solo pagos de este ID
             h_c_filtrado = h_c[h_c["ID_Prestamo"] == d_c['ID']].reset_index(drop=True)
             for r_idx, fila_h in h_c_filtrado.iterrows():
                 r_num = r_idx + 4
@@ -131,6 +132,7 @@ st.title("🏦 PANEL DE CONTROL")
 df_p, df_h = cargar_datos()
 
 if df_p is not None:
+    # BOTÓN FLOTANTE 👤➕
     if st.button("👤➕", key="btn_nuevo_circular"):
         st.session_state.mostrar_nuevo = not st.session_state.mostrar_nuevo
 
@@ -146,11 +148,12 @@ if df_p is not None:
                 conn.update(worksheet="Prestamos", data=pd.concat([df_p, nuevo], ignore_index=True))
                 st.session_state.mostrar_nuevo = False; st.rerun()
 
-    bq = st.text_input("🔍 BUSCAR:", placeholder="Escribe nombre...")
+    bq = st.text_input("🔍 BUSCAR NOMBRE:", placeholder="Escribe aquí...")
     act = df_p[df_p["Estado"] == "ACTIVO"]
     if bq: act = act[act['Nombre'].str.contains(bq, case=False)]
     
     for idx, row in act.iterrows():
+        # PERSISTENCIA DEL EXPANDER
         is_open = st.session_state.id_abierto == row['ID']
         with st.expander(f"👤 {row['Nombre'].upper()} | 💰 SALDO: ${row['Saldo_Restante']}", expanded=is_open):
             c1, c2 = st.columns(2)
@@ -158,16 +161,21 @@ if df_p is not None:
                 st.metric("CUOTA", f"${row['Cuota_Mensual']}")
                 st.metric("PAGOS", f"{row['Pagos_Realizados']}/{row['Meses_Totales']}")
                 h_c_local = df_h[df_h["ID_Prestamo"] == row['ID']] if df_h is not None else pd.DataFrame()
-                st.download_button("📊 DESCARGAR EXCEL", data=generar_excel_pro(row, h_c_local), file_name=f"Estado_{row['Nombre']}.xlsx", key=f"ex_{row['ID']}", use_container_width=True)
+                st.download_button("📊 DESCARGAR EXCEL", data=generar_excel_pro(row, h_c_local), file_name=f"Estado_{row['Nombre']}.xlsx", key=f"ex_{row['ID']}_{st.session_state.pago_key}", use_container_width=True)
             with c2:
+                # LA LLAVE DEL ÉXITO: El key del form y del uploader cambian con pago_key
                 with st.form(key=f"f_{row['ID']}_{st.session_state.pago_key}"):
-                    correo, n_cuotas = st.text_input("Correo:", value=row.get('Email', "")), st.number_input("Cuotas:", min_value=1, value=1)
-                    ft = st.file_uploader("📸 RECIBO:", type=["jpg","png","jpeg"], key=f"foto_{row['ID']}")
-                    if st.form_submit_button("✅ CONFIRMAR"):
-                        if ft:
+                    correo = st.text_input("Correo:", value=row.get('Email', ""))
+                    n_cuotas = st.number_input("Cuotas:", min_value=1, value=1)
+                    # KEY DINÁMICO PARA EL ARCHIVO
+                    ft = st.file_uploader("📸 RECIBO (OBLIGATORIO):", type=["jpg","png","jpeg"], key=f"foto_{row['ID']}_{st.session_state.pago_key}")
+                    if st.form_submit_button("✅ CONFIRMAR PAGO"):
+                        if not ft:
+                            st.error("❌ Debes subir la foto del recibo.")
+                        else:
                             st.session_state.id_abierto = row['ID']
-                            url = subir_img(ft.getvalue())
-                            new_p = pd.DataFrame([{"ID_Prestamo": row['ID'], "Fecha_Pago": datetime.now().strftime("%Y-%m-%d %H:%M"), "Cuotas_Pagadas": n_cuotas, "Monto_Pagado": round(row['Cuota_Mensual']*n_cuotas, 2), "URL_Comprobante": url}])
+                            url_foto = subir_img(ft.getvalue())
+                            new_p = pd.DataFrame([{"ID_Prestamo": row['ID'], "Fecha_Pago": datetime.now().strftime("%Y-%m-%d %H:%M"), "Cuotas_Pagadas": n_cuotas, "Monto_Pagado": round(row['Cuota_Mensual']*n_cuotas, 2), "URL_Comprobante": url_foto}])
                             conn.update(worksheet="Pagos", data=pd.concat([df_h, new_p], ignore_index=True))
                             
                             row_upd = row.copy()
@@ -176,12 +184,14 @@ if df_p is not None:
                             if row_upd["Pagos_Realizados"] >= row["Meses_Totales"]: row_upd["Estado"] = "PAGADO"
                             df_p.loc[idx] = row_upd; conn.update(worksheet="Prestamos", data=df_p)
                             
-                            # GENERAR EXCEL FILTRADO SOLO PARA ESTE CORREO
-                            h_c_actualizado = pd.concat([h_c_local, new_p], ignore_index=True)
-                            exc_final = generar_excel_pro(row_upd, h_c_actualizado)
+                            h_c_nuevo = pd.concat([h_c_local, new_p], ignore_index=True)
+                            exc_final = generar_excel_pro(row_upd, h_c_nuevo)
                             
-                            if correo: enviar_mail(correo, row['Nombre'], exc_final, url)
-                            st.session_state.pago_key += 1; st.rerun()
+                            if correo: enviar_mail(correo, row['Nombre'], exc_final, url_foto)
+                            
+                            # AQUÍ CAMBIAMOS EL KEY PARA QUE TODO SE LIMPIE
+                            st.session_state.pago_key += 1
+                            st.balloons(); time.sleep(1); st.rerun()
             
-            if st.button(f"🗑️ ELIMINAR {row['Nombre'].split()[0]}", key=f"del_{row['ID']}", use_container_width=True):
+            if st.button(f"🗑️ ELIMINAR {row['Nombre'].split()[0]}", key=f"del_{row['ID']}"):
                 conn.update(worksheet="Prestamos", data=df_p[df_p["ID"] != row['ID']]); st.rerun()
