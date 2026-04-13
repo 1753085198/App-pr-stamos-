@@ -19,44 +19,14 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 # 1. CONFIGURACIÓN
 st.set_page_config(page_title="SISTEMA FINANCIERO PRO", page_icon="🏦", layout="wide")
 
-# 2. CSS PERSONALIZADO (BOTÓN NUEVO PRÉSTAMO)
+# 2. CSS PERSONALIZADO
 st.markdown("""
     <style>
     .stMarkdown p, label, .stSelectbox p, .stNumberInput label, .stTextInput label { font-size: 32px !important; font-weight: 700 !important; }
     input { font-size: 26px !important; height: 60px !important; }
-    
-    .stButton>button[kind="primary"] { 
-        font-size: 35px !important; font-weight: 900 !important; height: 7rem !important; 
-        border-radius: 20px !important; background-color: #28a745 !important; color: white !important; 
-    }
-    
-    .stDownloadButton>button {
-        font-size: 35px !important; font-weight: 900 !important; height: 7rem !important;
-        border-radius: 20px !important; background-color: #1D6F42 !important; color: white !important;
-    }
-
-    /* BOTÓN NUEVO PRÉSTAMO LLAMATIVO Y ANCHO */
-    div.stButton > button:first-child[key^="btn_nuevo_circular"] {
-        background-color: #ff5722 !important; /* Naranja Neón */
-        color: white !important;
-        border-radius: 50px !important; /* Bordes redondeados pero no circular */
-        padding: 20px 40px !important;
-        font-size: 35px !important;
-        font-weight: 900 !important;
-        box-shadow: 0px 10px 25px rgba(255, 87, 34, 0.6) !important;
-        border: 4px solid white !important;
-        position: fixed;
-        bottom: 40px;
-        right: 40px;
-        z-index: 9999;
-        transition: 0.3s;
-    }
-    
-    div.stButton > button:first-child[key^="btn_nuevo_circular"]:hover {
-        transform: scale(1.05);
-        background-color: #e64a19 !important;
-    }
-
+    .stButton>button[kind="primary"] { font-size: 35px !important; font-weight: 900 !important; height: 7rem !important; border-radius: 20px !important; background-color: #28a745 !important; color: white !important; }
+    .stDownloadButton>button { font-size: 35px !important; font-weight: 900 !important; height: 7rem !important; border-radius: 20px !important; background-color: #1D6F42 !important; color: white !important; }
+    div.stButton > button:first-child[key^="btn_nuevo_circular"] { background-color: #ff5722 !important; color: white !important; border-radius: 50px !important; padding: 20px 40px !important; font-size: 35px !important; font-weight: 900 !important; box-shadow: 0px 10px 25px rgba(255, 87, 34, 0.6) !important; border: 4px solid white !important; position: fixed; bottom: 40px; right: 40px; z-index: 9999; }
     [data-testid="stMetricValue"] { font-size: 85px !important; font-weight: 900 !important; color: #007bff !important; }
     .streamlit-expanderHeader { font-size: 38px !important; font-weight: 800 !important; padding: 25px !important; }
     </style>
@@ -64,7 +34,6 @@ st.markdown("""
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- MEMORIA ---
 if 'pago_key' not in st.session_state: st.session_state.pago_key = 0
 if 'id_abierto' not in st.session_state: st.session_state.id_abierto = None
 if 'mostrar_nuevo' not in st.session_state: st.session_state.mostrar_nuevo = False
@@ -91,52 +60,59 @@ def subir_img(archivo):
 def generar_excel_pro(d_c, h_c):
     out = io.BytesIO()
     with pd.ExcelWriter(out, engine='openpyxl') as writer:
+        # HOJA 1: ESTADO
         ws = writer.book.create_sheet("ESTADO DE CUENTA", 0)
         f_azul, f_verde = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid"), PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-        ws["A1"] = "ESTADO DE CUENTA BANCARIO"; ws["A3"], ws["B3"] = "NOMBRE:", str(d_c['Nombre']).upper()
-        ws["A4"], ws["B4"] = "CÉDULA:", str(d_c['Cedula']); ws["D3"], ws["E3"] = "MONTO:", f"${d_c['Monto_Inicial']}"; ws["D4"], ws["E4"] = "SALDO:", f"${d_c['Saldo_Restante']}"
-        h = ["N°", "Descripción", "Valor Cuota", "Estado"]
+        ws["A1"] = "REPORTE DE PRESTAMO"; ws["A3"], ws["B3"] = "NOMBRE:", str(d_c['Nombre']).upper()
+        ws["A4"], ws["B4"] = "CÉDULA:", str(d_c['Cedula']); ws["D3"], ws["E3"] = "MONTO INICIAL:", f"${d_c['Monto_Inicial']}"; ws["D4"], ws["E4"] = "SALDO RESTANTE:", f"${d_c['Saldo_Restante']}"
+        h = ["N°", "Detalle", "Cuota ($)", "Estado"]
         for c, t in enumerate(h, 1):
             cell = ws.cell(row=11, column=c, value=t)
             cell.fill = f_azul; cell.font = Font(color="FFFFFF", bold=True)
         pag = int(d_c['Pagos_Realizados'])
         for i in range(1, int(d_c['Meses_Totales']) + 1):
             r = 11 + i
-            ws.cell(row=r, column=1, value=i); ws.cell(row=r, column=3, value=d_c['Cuota_Mensual'])
+            ws.cell(row=r, column=1, value=i); ws.cell(row=r, column=2, value=f"Cuota mes {i}")
+            ws.cell(row=r, column=3, value=d_c['Cuota_Mensual'])
             est = "PAGADO" if i <= pag else "PENDIENTE"
             ws.cell(row=r, column=4, value=est)
             if i <= pag:
                 for col in range(1, 5): ws.cell(row=r, column=col).fill = f_verde
-        ws_comp = writer.book.create_sheet("COMPROBANTES", 1)
+        
+        # HOJA 2: COMPROBANTES (FILTRADA)
+        ws2 = writer.book.create_sheet("COMPROBANTES", 1)
+        ws2["A1"] = "HISTORIAL DE PAGOS"; h2 = ["Fecha", "Monto", "Cuotas", "Recibo"]
+        for c, t in enumerate(h2, 1):
+            cell = ws2.cell(row=3, column=c, value=t)
+            cell.fill = f_azul; cell.font = Font(color="FFFFFF", bold=True)
         if h_c is not None and not h_c.empty:
             h_filtrado = h_c[h_c["ID_Prestamo"] == d_c['ID']].reset_index(drop=True)
             for r_idx, fila in h_filtrado.iterrows():
                 rn = r_idx + 4
-                ws_comp.cell(row=rn, column=1, value=str(fila['Fecha_Pago']))
-                ws_comp.cell(row=rn, column=2, value=fila['Monto_Pagado'])
-                url_v = fila.get('URL_Comprobante', "")
-                if pd.notnull(url_v) and str(url_v).startswith("http"):
-                    lc = ws_comp.cell(row=rn, column=4, value="VER RECIBO")
-                    lc.hyperlink = str(url_v); lc.font = Font(color="0000FF", underline="single")
+                ws2.cell(row=rn, column=1, value=str(fila['Fecha_Pago']))
+                ws2.cell(row=rn, column=2, value=fila['Monto_Pagado'])
+                ws2.cell(row=rn, column=3, value=fila['Cuotas_Pagadas'])
+                u = fila.get('URL_Comprobante', "")
+                if pd.notnull(u) and str(u).startswith("http"):
+                    lc = ws2.cell(row=rn, column=4, value="VER FOTO"); lc.hyperlink = str(u); lc.font = Font(color="0000FF", underline="single")
         for w in writer.book.worksheets:
             for col in w.columns: w.column_dimensions[col[0].column_letter].width = 25
     return out.getvalue()
 
 def enviar_mail(dest, nom, exc, url):
     try:
-        msg = MIMEMultipart(); msg['From'] = st.secrets["EMAIL_USER"]; msg['To'] = dest; msg['Subject'] = f"✅ Comprobante - {nom}"
-        msg.attach(MIMEText(f"Hola {nom}, adjunto tu reporte. Recibo: {url}", 'plain'))
+        msg = MIMEMultipart(); msg['From'] = st.secrets["EMAIL_USER"]; msg['To'] = dest; msg['Subject'] = f"✅ Pago - {nom}"
+        msg.attach(MIMEText(f"Hola {nom}, adjunto tu estado. Foto: {url}", 'plain'))
         p = MIMEBase('application', 'octet-stream'); p.set_payload(exc); encoders.encode_base64(p)
         p.add_header('Content-Disposition', f"attachment; filename=Estado_{nom}.xlsx"); msg.attach(p)
         s = smtplib.SMTP('smtp.gmail.com', 587); s.starttls(); s.login(st.secrets["EMAIL_USER"], st.secrets["EMAIL_PASS"]); s.send_message(msg); s.quit()
     except: pass
 
 # --- INTERFAZ ---
-st.title("🏦 PANEL DE CONTROL")
+st.title("🏦 CONTROL DE PRESTAMOS")
 df_p, df_h = cargar_datos()
 
 if df_p is not None:
-    # --- BOTÓN FLOTANTE NUEVO ---
     if st.button("👤 NUEVO PRÉSTAMO", key="btn_nuevo_circular"):
         st.session_state.mostrar_nuevo = not st.session_state.mostrar_nuevo
 
@@ -147,8 +123,10 @@ if df_p is not None:
             c1, c2, c3 = st.columns(3)
             mn, ts, pz = c1.number_input("Monto:"), c3.number_input("Tasa %:"), c2.number_input("Meses:")
             if st.form_submit_button("💾 GUARDAR"):
-                tm = (ts/100)/12; cu = mn * (tm * (1+tm)**pz) / ((1+tm)**pz - 1) if tm > 0 else mn/pz
-                nuevo = pd.DataFrame([{"ID": str(uuid.uuid4())[:8], "Fecha": datetime.now().strftime("%Y-%m-%d"), "Nombre": nm, "Cedula": ced, "Email": ml, "Monto_Inicial": mn, "Saldo_Restante": mn, "Cuota_Mensual": round(cu, 2), "Meses_Totales": int(pz), "Pagos_Realizados": 0, "Estado": "ACTIVO", "Tasa": ts}])
+                # FÓRMULA FRANCESA (Capital + Interés Real)
+                i_mensual = (ts/100)/12
+                cuo = mn * (i_mensual * (1 + i_mensual)**pz) / ((1 + i_mensual)**pz - 1) if i_mensual > 0 else mn/pz
+                nuevo = pd.DataFrame([{"ID": str(uuid.uuid4())[:8], "Fecha": datetime.now().strftime("%Y-%m-%d"), "Nombre": nm, "Cedula": ced, "Email": ml, "Monto_Inicial": mn, "Saldo_Restante": round(cuo*pz, 2), "Cuota_Mensual": round(cuo, 2), "Meses_Totales": int(pz), "Pagos_Realizados": 0, "Estado": "ACTIVO", "Tasa": ts}])
                 conn.update(worksheet="Prestamos", data=pd.concat([df_p, nuevo], ignore_index=True))
                 st.session_state.mostrar_nuevo = False; st.rerun()
 
@@ -162,24 +140,29 @@ if df_p is not None:
             c1, c2 = st.columns(2)
             with c1:
                 st.metric("CUOTA", f"${row['Cuota_Mensual']}")
-                st.metric("PAGOS", f"{row['Pagos_Realizados']}/{row['Meses_Totales']}")
-                h_c_local = df_h[df_h["ID_Prestamo"] == row['ID']] if df_h is not None else pd.DataFrame()
-                st.download_button("📊 DESCARGAR EXCEL", data=generar_excel_pro(row, h_c_local), file_name=f"Estado_{row['Nombre']}.xlsx", key=f"ex_{row['ID']}_{st.session_state.pago_key}", use_container_width=True)
+                st.metric("AVANCE", f"{row['Pagos_Realizados']}/{row['Meses_Totales']}")
+                h_c_loc = df_h[df_h["ID_Prestamo"] == row['ID']] if df_h is not None else pd.DataFrame()
+                st.download_button("📊 EXCEL", data=generar_excel_pro(row, h_c_loc), file_name=f"Estado_{row['Nombre']}.xlsx", key=f"ex_{row['ID']}_{st.session_state.pago_key}", use_container_width=True)
             with c2:
                 with st.form(key=f"f_{row['ID']}_{st.session_state.pago_key}"):
                     correo, n_cuotas = st.text_input("Correo:", value=row.get('Email', "")), st.number_input("Cuotas:", min_value=1, value=1)
                     ft = st.file_uploader("📸 RECIBO:", type=["jpg","png","jpeg"], key=f"foto_{row['ID']}_{st.session_state.pago_key}")
-                    if st.form_submit_button("✅ CONFIRMAR PAGO"):
+                    if st.form_submit_button("✅ CONFIRMAR"):
                         if ft:
                             st.session_state.id_abierto = row['ID']
                             url = subir_img(ft.getvalue())
                             new_p = pd.DataFrame([{"ID_Prestamo": row['ID'], "Fecha_Pago": datetime.now().strftime("%Y-%m-%d %H:%M"), "Cuotas_Pagadas": n_cuotas, "Monto_Pagado": round(row['Cuota_Mensual']*n_cuotas, 2), "URL_Comprobante": url}])
                             conn.update(worksheet="Pagos", data=pd.concat([df_h, new_p], ignore_index=True))
-                            r_u = row.copy(); r_u["Pagos_Realizados"] += n_cuotas; r_u["Saldo_Restante"] = round(max(0, row["Saldo_Restante"] - (row["Monto_Inicial"]/row["Meses_Totales"])*n_cuotas), 2)
-                            if r_u["Pagos_Realizados"] >= row["Meses_Totales"]: r_u["Estado"] = "PAGADO"
-                            df_p.loc[idx] = r_u; conn.update(worksheet="Prestamos", data=df_p)
-                            if correo: enviar_mail(correo, row['Nombre'], generar_excel_pro(r_u, pd.concat([df_h, new_p])), url)
-                            st.session_state.pago_key += 1; st.balloons(); time.sleep(1); st.rerun()
+                            
+                            row_upd = row.copy()
+                            row_upd["Pagos_Realizados"] += n_cuotas
+                            row_upd["Saldo_Restante"] = round(max(0, row["Saldo_Restante"] - (row["Cuota_Mensual"] * n_cuotas)), 2)
+                            if row_upd["Pagos_Realizados"] >= row["Meses_Totales"]: row_upd["Estado"] = "PAGADO"
+                            df_p.loc[idx] = row_upd; conn.update(worksheet="Prestamos", data=df_p)
+                            
+                            h_c_envio = pd.concat([h_c_loc, new_p], ignore_index=True)
+                            if correo: enviar_mail(correo, row['Nombre'], generar_excel_pro(row_upd, h_c_envio), url)
+                            st.session_state.pago_key += 1; st.rerun()
             
             if st.button(f"🗑️ ELIMINAR {row['Nombre'].split()[0]}", key=f"del_{row['ID']}"):
                 conn.update(worksheet="Prestamos", data=df_p[df_p["ID"] != row['ID']]); st.rerun()
