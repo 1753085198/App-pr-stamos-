@@ -55,7 +55,6 @@ def generar_excel_grupal(df, titulo):
     out = io.BytesIO()
     with pd.ExcelWriter(out, engine='openpyxl') as writer:
         ws = writer.book.create_sheet("REPORTE_GENERAL", 0)
-        
         header_fill = PatternFill(start_color="0B2F45", end_color="0B2F45", fill_type="solid")
         header_font = Font(color="FFFFFF", bold=True, size=12)
         v_fill = PatternFill(start_color="E2F0D9", end_color="E2F0D9", fill_type="solid") 
@@ -64,164 +63,143 @@ def generar_excel_grupal(df, titulo):
         thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
         label_monto = "DEUDA PENDIENTE" if "PRÉSTAMOS" in titulo.upper() else "TOTAL APORTADO"
-        
-        ws.merge_cells("A1:D1")
-        ws["A1"] = f"COOP SAN BLAS - REPORTE DE {titulo}"
-        ws["A1"].font = Font(bold=True, size=16, color="0B2F45")
-        ws["A1"].alignment = center_align
+        ws.merge_cells("A1:D1"); ws["A1"] = f"COOP SAN BLAS - REPORTE DE {titulo}"; ws["A1"].font = Font(bold=True, size=16, color="0B2F45"); ws["A1"].alignment = center_align
         ws.append([])
 
         headers = ["NOMBRE COMPLETO", "CÉDULA", label_monto, "ESTADO ACTUAL"]
         ws.append(headers)
-        for cell in ws[3]:
-            cell.fill = header_fill
-            cell.font = header_font
-            cell.alignment = center_align
-            cell.border = thin_border
+        for cell in ws[3]: cell.fill = header_fill; cell.font = header_font; cell.alignment = center_align; cell.border = thin_border
 
         for _, row in df.iterrows():
             m = float(row.get('Saldo_Total_Aportado', row.get('Saldo_Restante', 0)))
             if "PRÉSTAMOS" in titulo.upper():
-                estado = row.get("Estado", "ACTIVO")
-                color = v_fill if estado == "PAGADO" else r_fill
+                estado = row.get("Estado", "ACTIVO"); color = v_fill if estado == "PAGADO" else r_fill
             else:
-                estado = "AL DÍA" if m > 0 else "PENDIENTE"
-                color = v_fill if m > 0 else r_fill
-            
+                estado = "AL DÍA" if m > 0 else "PENDIENTE"; color = v_fill if m > 0 else r_fill
             ws.append([row['Nombre'], row['Cedula'], m, estado])
-            for cell in ws[ws.max_row]:
-                cell.fill = color
-                cell.alignment = center_align
-                cell.border = thin_border
+            for cell in ws[ws.max_row]: cell.fill = color; cell.alignment = center_align; cell.border = thin_border
 
-        ws.column_dimensions['A'].width = 40
-        ws.column_dimensions['B'].width = 20
-        ws.column_dimensions['C'].width = 25
-        ws.column_dimensions['D'].width = 25
-            
+        ws.column_dimensions['A'].width = 40; ws.column_dimensions['B'].width = 20; ws.column_dimensions['C'].width = 25; ws.column_dimensions['D'].width = 25
     return out.getvalue()
 
 def generar_excel_personal(row, historial, tipo):
     out = io.BytesIO()
     with pd.ExcelWriter(out, engine='openpyxl') as writer:
-        header_fill = PatternFill(start_color="0B2F45", end_color="0B2F45", fill_type="solid")
-        header_font = Font(color="FFFFFF", bold=True, size=12)
+        header_fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid") # Gris claro para tabla
+        header_font = Font(bold=True)
         center_align = Alignment(horizontal="center", vertical="center")
-        title_font = Font(bold=True, size=16, color="0B2F45")
         thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
+        # BLINDAJE ANTICAÍDAS PARA ID_SOCIO / ID_PRESTAMO
         p_fil = pd.DataFrame()
         if not historial.empty:
-            col_id = 'ID_Prestamo' if 'ID_Prestamo' in historial.columns else 'ID_Socio'
-            if col_id in historial.columns:
-                p_fil = historial[historial[col_id] == row['ID']]
-
-        # --- HOJA 1: RESUMEN FINANCIERO ---
-        ws1 = writer.book.create_sheet("RESUMEN_FINANCIERO", 0)
-        ws1.merge_cells("A1:C1" if tipo == "PRÉSTAMO" else "A1:B1")
-        ws1["A1"] = f"COOP SAN BLAS - ESTADO DE {tipo}"
-        ws1["A1"].font = title_font
-        ws1["A1"].alignment = center_align
-
-        ws1.append([f"SOCIO/CLIENTE:", row['Nombre']])
-        ws1.append([f"CÉDULA:", row['Cedula']])
-        ws1.append([""])
+            if 'ID_Socio' in historial.columns:
+                p_fil = historial[historial['ID_Socio'] == row['ID']]
+            elif 'ID_Prestamo' in historial.columns:
+                p_fil = historial[historial['ID_Prestamo'] == row['ID']]
 
         if tipo == "PRÉSTAMO":
-            ws1.append(["FECHA DEL PAGO", "VALOR ABONADO ($)", "ENLACE AL RECIBO"])
-            for cell in ws1[5]:
-                cell.fill = header_fill; cell.font = header_font; cell.alignment = center_align
-
-            for _, p in p_fil.iterrows(): 
-                f = p.get('Fecha', p.get('Fecha_Pago', ''))
-                m = p.get('Monto', p.get('Monto_Pagado', 0))
-                c = p.get('Comprobante', p.get('URL', p.get('URL_Comprobante', 'N/A')))
-                ws1.append([f, m, c])
-                for cell in ws1[ws1.max_row]: cell.border = thin_border; cell.alignment = center_align
-                
-            ws1.append(["", "DEUDA RESTANTE:", row.get('Saldo_Restante', 0)])
-            ws1.cell(row=ws1.max_row, column=2).font = Font(bold=True)
-            ws1.cell(row=ws1.max_row, column=3).font = Font(bold=True)
-
-            ws1.column_dimensions['A'].width = 25
-            ws1.column_dimensions['B'].width = 25
-            ws1.column_dimensions['C'].width = 50
-
-            # --- HOJA 2 PRÉSTAMOS: TABLA DE AMORTIZACIÓN (TASA PLANA) ---
-            ws2 = writer.book.create_sheet("TABLA_AMORTIZACION", 1)
-            ws2.merge_cells("A1:E1")
-            ws2["A1"] = f"TABLA DE AMORTIZACIÓN (TASA PLANA FIJA)"
-            ws2["A1"].font = title_font
-            ws2["A1"].alignment = center_align
-            ws2.append([""])
-            ws2.append(["N° DE CUOTA", "CAPITAL ($)", "INTERÉS ($)", "VALOR CUOTA ($)", "ESTADO DE PAGO"])
-            for cell in ws2[3]:
-                cell.fill = header_fill; cell.font = header_font; cell.alignment = center_align
+            ws1 = writer.book.create_sheet("AMORTIZACION_SAN_BLAS", 0)
             
+            monto_inicial = float(row.get('Monto_Inicial', 0))
             meses = int(row.get('Meses_Totales', 1))
             cuota = float(row.get('Cuota_Mensual', 0))
             pagos_hechos = int(row.get('Pagos_Realizados', 0))
-            monto_inicial = float(row.get('Monto_Inicial', 0))
-            
-            # Cálculos inversos para mostrar los valores planos fijos
             deuda_total = cuota * meses
             interes_total = deuda_total - monto_inicial
+            
+            # Encabezados de información general (como en la foto)
+            info = [
+                ("FECHA EMISION", datetime.now().strftime("%d/%m/%Y")),
+                ("NOMBRE", row['Nombre']),
+                ("CEDULA", row['Cedula']),
+                ("FECHA INICIAL AYUDA", datetime.now().strftime("%d/%m/%Y")),
+                ("FECHA VENCIMIENTO", ""),
+                ("PLAZO MESES", meses),
+                ("CONTRIBUCION ANUAL", "8%"),
+                ("VALOR AYUDA REEMBOLSABLE", round(monto_inicial, 2)),
+                ("CONTRIBUCION", round(interes_total, 2)),
+                ("SUMA TOTAL", round(deuda_total, 2))
+            ]
+            
+            for idx, (label, val) in enumerate(info, start=1):
+                ws1.cell(row=idx, column=2, value=label).font = header_font
+                ws1.cell(row=idx, column=3, value=val)
+                ws1.cell(row=idx, column=2).border = thin_border
+                ws1.cell(row=idx, column=3).border = thin_border
+
+            ws1.append([]) # Espacio
+            
+            # Cabeceras de la tabla
+            headers = ["N°", "FECHAS DE PAGO", "SALDO", "CAPITAL", "CONTRIB", "CUOTA", "PAGOS REALIZADOS", "SALDO RESTANTE"]
+            ws1.append(headers)
+            header_row = ws1.max_row
+            for col_idx, cell in enumerate(ws1[header_row], start=1):
+                cell.fill = header_fill; cell.font = header_font; cell.alignment = center_align; cell.border = thin_border
+
             cap_mensual = monto_inicial / meses if meses > 0 else 0
             int_mensual = interes_total / meses if meses > 0 else 0
-            
-            for i in range(1, meses + 1):
-                estado_cuota = "PAGADO" if i <= pagos_hechos else "PENDIENTE"
-                ws2.append([f"Cuota {i}", round(cap_mensual, 2), round(int_mensual, 2), round(cuota, 2), estado_cuota])
-                for cell in ws2[ws2.max_row]: cell.border = thin_border; cell.alignment = center_align
+            saldo_descendente = deuda_total
 
-            ws2.column_dimensions['A'].width = 15
-            ws2.column_dimensions['B'].width = 20
-            ws2.column_dimensions['C'].width = 20
-            ws2.column_dimensions['D'].width = 25
-            ws2.column_dimensions['E'].width = 25
+            # Llenar cuotas
+            for i in range(1, meses + 1):
+                pago_realizado = cuota if i <= pagos_hechos else 0
+                saldo_restante_fila = saldo_descendente - pago_realizado if i <= pagos_hechos else saldo_descendente
+                
+                # Asignar fecha de pago si existe en el historial
+                fecha_pago = ""
+                if i <= len(p_fil):
+                    fecha_pago = p_fil.iloc[i-1].get('Fecha', p_fil.iloc[i-1].get('Fecha_Pago', ''))
+
+                ws1.append([
+                    i, 
+                    fecha_pago, 
+                    round(saldo_descendente, 2), 
+                    round(cap_mensual, 2), 
+                    round(int_mensual, 2), 
+                    round(cuota, 2), 
+                    round(pago_realizado, 2), 
+                    round(saldo_restante_fila, 2)
+                ])
+                if i <= pagos_hechos: saldo_descendente -= cuota
+                for cell in ws1[ws1.max_row]: cell.border = thin_border; cell.alignment = center_align
+
+            # Ajuste de anchos
+            for col in ['B', 'C', 'D', 'E', 'F', 'G', 'H']: ws1.column_dimensions[col].width = 18
 
         else:
-            # --- COOPERATIVA Y AYUDAS (HOJA 1 Y 2) ---
+            # --- COOPERATIVA Y AYUDAS ---
+            ws1 = writer.book.create_sheet("RESUMEN_FINANCIERO", 0)
+            ws1.merge_cells("A1:B1"); ws1["A1"] = f"COOP SAN BLAS - {tipo}"; ws1["A1"].font = Font(bold=True, size=16, color="0B2F45"); ws1["A1"].alignment = center_align
+            ws1.append([f"SOCIO:", row['Nombre']]); ws1.append([f"CÉDULA:", row['Cedula']]); ws1.append([""])
+
             ws1.append(["FECHA DEL APORTE", "MONTO APORTADO ($)"])
-            for cell in ws1[5]:
-                cell.fill = header_fill; cell.font = header_font; cell.alignment = center_align
+            for cell in ws1[5]: cell.fill = header_fill; cell.font = header_font; cell.alignment = center_align; cell.border = thin_border
 
             for _, p in p_fil.iterrows(): 
-                f = p.get('Fecha', '')
-                m = p.get('Monto', 0)
+                f = p.get('Fecha', ''); m = p.get('Monto', 0)
                 ws1.append([f, m])
                 for cell in ws1[ws1.max_row]: cell.border = thin_border; cell.alignment = center_align
             
             ws1.append(["TOTAL ACUMULADO:", row.get('Saldo_Total_Aportado', 0)])
-            ws1.cell(row=ws1.max_row, column=1).font = Font(bold=True)
-            ws1.cell(row=ws1.max_row, column=2).font = Font(bold=True)
+            ws1.cell(row=ws1.max_row, column=1).font = Font(bold=True); ws1.cell(row=ws1.max_row, column=2).font = Font(bold=True)
+            ws1.column_dimensions['A'].width = 25; ws1.column_dimensions['B'].width = 25
 
-            ws1.column_dimensions['A'].width = 25
-            ws1.column_dimensions['B'].width = 25
-
-            # --- HOJA 2: RESPALDOS DIGITALES ---
-            ws3 = writer.book.create_sheet("RESPALDOS_DIGITALES", 1)
-            ws3.merge_cells("A1:B1")
-            ws3["A1"] = f"COMPROBANTES DIGITALES"
-            ws3["A1"].font = title_font
-            ws3["A1"].alignment = center_align
-            ws3.append([""])
-            ws3.append(["FECHA DE PAGO", "ENLACE AL RECIBO (CLIC PARA ABRIR)"])
-            for cell in ws3[3]:
-                cell.fill = header_fill; cell.font = header_font; cell.alignment = center_align
+            # --- HOJA DE LINKS ---
+            ws2 = writer.book.create_sheet("RESPALDOS_DIGITALES", 1)
+            ws2.merge_cells("A1:B1"); ws2["A1"] = "COMPROBANTES DIGITALES"; ws2["A1"].font = Font(bold=True, size=16, color="0B2F45"); ws2["A1"].alignment = center_align
+            ws2.append([""]); ws2.append(["FECHA DE PAGO", "ENLACE AL RECIBO (CLIC PARA ABRIR)"])
+            for cell in ws2[3]: cell.fill = header_fill; cell.font = header_font; cell.alignment = center_align; cell.border = thin_border
             
             for _, p in p_fil.iterrows(): 
-                f = p.get('Fecha', '')
-                c = p.get('Comprobante', 'N/A')
-                ws3.append([f, c])
-                for cell in ws3[ws3.max_row]: 
+                f = p.get('Fecha', ''); c = p.get('Comprobante', 'N/A')
+                ws2.append([f, c])
+                for cell in ws2[ws2.max_row]: 
                     cell.border = thin_border; cell.alignment = center_align
                     if str(cell.value).startswith('http'):
-                        cell.font = Font(color="0563C1", underline="single")
-                        cell.hyperlink = cell.value
+                        cell.font = Font(color="0563C1", underline="single"); cell.hyperlink = cell.value
 
-            ws3.column_dimensions['A'].width = 25
-            ws3.column_dimensions['B'].width = 60
+            ws2.column_dimensions['A'].width = 25; ws2.column_dimensions['B'].width = 60
             
     return out.getvalue()
 
@@ -251,14 +229,11 @@ if sec == "💰 PRÉSTAMOS":
             n, c, e = st.text_input("Nombre:"), st.text_input("Cédula:"), st.text_input("Email:")
             m, t, p = st.number_input("Monto:", min_value=1.0), st.number_input("Tasa Anual %:", value=8.0), st.number_input("Meses:", value=36)
             if st.form_submit_button("💾 GUARDAR"):
-                # NUEVA FÓRMULA: Interés Simple / Tasa Plana
                 interes_total = m * (t / 100) * (p / 12)
                 deuda_total = m + interes_total
                 cuo = deuda_total / p
-                
                 new = pd.DataFrame([{"ID":str(uuid.uuid4())[:8], "Nombre":n, "Cedula":c, "Email":e, "Monto_Inicial":m, "Saldo_Restante":round(deuda_total,2), "Cuota_Mensual":round(cuo,2), "Meses_Totales":p, "Pagos_Realizados":0, "Estado":"ACTIVO"}])
-                conn.update(worksheet="Prestamos", data=pd.concat([df_p, new], ignore_index=True))
-                st.session_state.show_form_p = False; st.rerun()
+                conn.update(worksheet="Prestamos", data=pd.concat([df_p, new], ignore_index=True)); st.session_state.show_form_p = False; st.rerun()
 
     bq_p = st.text_input("🔍 BUSCAR PRESTAMISTA:")
     act_p = df_p[df_p["Estado"]=="ACTIVO"] if not df_p.empty else pd.DataFrame()
@@ -283,7 +258,7 @@ if sec == "💰 PRÉSTAMOS":
                             if row.get('Email'): enviar_mail(row['Email'], row['Nombre'], generar_excel_personal(df_p.loc[idx], pd.concat([df_h, new_h]), "PRÉSTAMO"), url, "Prestamos")
                             st.session_state.pago_key += 1; st.rerun()
             with c2: 
-                st.download_button(f"📊 DESCARGAR ESTADO DE CUENTA", data=generar_excel_personal(row, df_h, "PRÉSTAMO"), file_name=f"Deuda_{row['Nombre']}.xlsx", key=f"dlp_{row['ID']}")
+                st.download_button(f"📊 TABLA AMORTIZACIÓN", data=generar_excel_personal(row, df_h, "PRÉSTAMO"), file_name=f"Amortizacion_{row['Nombre']}.xlsx", key=f"dlp_{row['ID']}")
             with st.popover("🗑️ ELIMINAR"):
                 st.warning(f"¿Borrar préstamo de {row['Nombre']}?")
                 if st.button("CONFIRMAR ELIMINACIÓN", key=f"del_p_{row['ID']}"):
@@ -302,8 +277,7 @@ elif sec == "🤝 COOPERATIVA":
             n, c, e = st.text_input("Nombre:"), st.text_input("Cédula:"), st.text_input("Email:")
             if st.form_submit_button("💾 AÑADIR"):
                 new = pd.DataFrame([{"ID":str(uuid.uuid4())[:5], "Nombre":n, "Cedula":c, "Email":e, "Saldo_Total_Aportado":0}])
-                conn.update(worksheet="Cooperativa", data=pd.concat([df_s, new], ignore_index=True))
-                st.session_state.show_form_c = False; st.rerun()
+                conn.update(worksheet="Cooperativa", data=pd.concat([df_s, new], ignore_index=True)); st.session_state.show_form_c = False; st.rerun()
 
     bq_c = st.text_input("🔍 BUSCAR SOCIO:")
     act_c = df_s if not df_s.empty else pd.DataFrame()
@@ -355,8 +329,7 @@ elif sec == "🚑 AYUDAS ECON.":
             n, c, e = st.text_input("Nombre:"), st.text_input("Cédula:"), st.text_input("Email:")
             if st.form_submit_button("AÑADIR"):
                 new = pd.DataFrame([{"ID":str(uuid.uuid4())[:5], "Nombre":n, "Cedula":c, "Email":e, "Saldo_Total_Aportado":0}])
-                conn.update(worksheet="Ayudas_Listado", data=pd.concat([df_a, new], ignore_index=True))
-                st.session_state.show_form_a = False; st.rerun()
+                conn.update(worksheet="Ayudas_Listado", data=pd.concat([df_a, new], ignore_index=True)); st.session_state.show_form_a = False; st.rerun()
 
     bq_a = st.text_input("🔍 BUSCAR EN AYUDAS:")
     act_a = df_a if not df_a.empty else pd.DataFrame()
