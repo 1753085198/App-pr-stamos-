@@ -56,24 +56,21 @@ def generar_excel_grupal(df, titulo):
     with pd.ExcelWriter(out, engine='openpyxl') as writer:
         ws = writer.book.create_sheet("REPORTE_GENERAL", 0)
         
-        # Estilos Elegantes Coop San Blas
-        header_fill = PatternFill(start_color="0B2F45", end_color="0B2F45", fill_type="solid") # Azul Marino Elegante
+        header_fill = PatternFill(start_color="0B2F45", end_color="0B2F45", fill_type="solid")
         header_font = Font(color="FFFFFF", bold=True, size=12)
-        v_fill = PatternFill(start_color="E2F0D9", end_color="E2F0D9", fill_type="solid") # Verde Suave
-        r_fill = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid") # Rojo Suave
+        v_fill = PatternFill(start_color="E2F0D9", end_color="E2F0D9", fill_type="solid") 
+        r_fill = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid") 
         center_align = Alignment(horizontal="center", vertical="center")
         thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
         label_monto = "DEUDA PENDIENTE" if "PRÉSTAMOS" in titulo.upper() else "TOTAL APORTADO"
         
-        # Título del Reporte
         ws.merge_cells("A1:D1")
         ws["A1"] = f"COOP SAN BLAS - REPORTE DE {titulo}"
         ws["A1"].font = Font(bold=True, size=16, color="0B2F45")
         ws["A1"].alignment = center_align
-        ws.append([]) # Espacio
+        ws.append([])
 
-        # Encabezados
         headers = ["NOMBRE COMPLETO", "CÉDULA", label_monto, "ESTADO ACTUAL"]
         ws.append(headers)
         for cell in ws[3]:
@@ -82,7 +79,6 @@ def generar_excel_grupal(df, titulo):
             cell.alignment = center_align
             cell.border = thin_border
 
-        # Datos
         for _, row in df.iterrows():
             m = float(row.get('Saldo_Total_Aportado', row.get('Saldo_Restante', 0)))
             if "PRÉSTAMOS" in titulo.upper():
@@ -108,7 +104,6 @@ def generar_excel_grupal(df, titulo):
 def generar_excel_personal(row, historial, tipo):
     out = io.BytesIO()
     with pd.ExcelWriter(out, engine='openpyxl') as writer:
-        # Estilos Base
         header_fill = PatternFill(start_color="0B2F45", end_color="0B2F45", fill_type="solid")
         header_font = Font(color="FFFFFF", bold=True, size=12)
         center_align = Alignment(horizontal="center", vertical="center")
@@ -152,29 +147,38 @@ def generar_excel_personal(row, historial, tipo):
             ws1.column_dimensions['B'].width = 25
             ws1.column_dimensions['C'].width = 50
 
-            # --- HOJA 2 PRÉSTAMOS: TABLA DE AMORTIZACIÓN ---
+            # --- HOJA 2 PRÉSTAMOS: TABLA DE AMORTIZACIÓN (TASA PLANA) ---
             ws2 = writer.book.create_sheet("TABLA_AMORTIZACION", 1)
-            ws2.merge_cells("A1:C1")
-            ws2["A1"] = f"TABLA DE AMORTIZACIÓN PROYECTADA"
+            ws2.merge_cells("A1:E1")
+            ws2["A1"] = f"TABLA DE AMORTIZACIÓN (TASA PLANA FIJA)"
             ws2["A1"].font = title_font
             ws2["A1"].alignment = center_align
             ws2.append([""])
-            ws2.append(["N° DE CUOTA", "VALOR CUOTA ($)", "ESTADO DE PAGO"])
+            ws2.append(["N° DE CUOTA", "CAPITAL ($)", "INTERÉS ($)", "VALOR CUOTA ($)", "ESTADO DE PAGO"])
             for cell in ws2[3]:
                 cell.fill = header_fill; cell.font = header_font; cell.alignment = center_align
             
             meses = int(row.get('Meses_Totales', 1))
             cuota = float(row.get('Cuota_Mensual', 0))
             pagos_hechos = int(row.get('Pagos_Realizados', 0))
+            monto_inicial = float(row.get('Monto_Inicial', 0))
+            
+            # Cálculos inversos para mostrar los valores planos fijos
+            deuda_total = cuota * meses
+            interes_total = deuda_total - monto_inicial
+            cap_mensual = monto_inicial / meses if meses > 0 else 0
+            int_mensual = interes_total / meses if meses > 0 else 0
             
             for i in range(1, meses + 1):
                 estado_cuota = "PAGADO" if i <= pagos_hechos else "PENDIENTE"
-                ws2.append([f"Cuota {i}", cuota, estado_cuota])
+                ws2.append([f"Cuota {i}", round(cap_mensual, 2), round(int_mensual, 2), round(cuota, 2), estado_cuota])
                 for cell in ws2[ws2.max_row]: cell.border = thin_border; cell.alignment = center_align
 
-            ws2.column_dimensions['A'].width = 20
-            ws2.column_dimensions['B'].width = 25
-            ws2.column_dimensions['C'].width = 25
+            ws2.column_dimensions['A'].width = 15
+            ws2.column_dimensions['B'].width = 20
+            ws2.column_dimensions['C'].width = 20
+            ws2.column_dimensions['D'].width = 25
+            ws2.column_dimensions['E'].width = 25
 
         else:
             # --- COOPERATIVA Y AYUDAS (HOJA 1 Y 2) ---
@@ -213,7 +217,7 @@ def generar_excel_personal(row, historial, tipo):
                 for cell in ws3[ws3.max_row]: 
                     cell.border = thin_border; cell.alignment = center_align
                     if str(cell.value).startswith('http'):
-                        cell.font = Font(color="0563C1", underline="single") # Formato de Link
+                        cell.font = Font(color="0563C1", underline="single")
                         cell.hyperlink = cell.value
 
             ws3.column_dimensions['A'].width = 25
@@ -245,10 +249,14 @@ if sec == "💰 PRÉSTAMOS":
     if st.session_state.get('show_form_p'):
         with st.form("form_p"):
             n, c, e = st.text_input("Nombre:"), st.text_input("Cédula:"), st.text_input("Email:")
-            m, t, p = st.number_input("Monto:", min_value=1.0), st.number_input("Tasa %:", value=15.0), st.number_input("Meses:", value=12)
+            m, t, p = st.number_input("Monto:", min_value=1.0), st.number_input("Tasa Anual %:", value=8.0), st.number_input("Meses:", value=36)
             if st.form_submit_button("💾 GUARDAR"):
-                i = (t/100)/12; cuo = m * (i*(1+i)**p)/((1+i)**p-1) if i>0 else m/p
-                new = pd.DataFrame([{"ID":str(uuid.uuid4())[:8], "Nombre":n, "Cedula":c, "Email":e, "Monto_Inicial":m, "Saldo_Restante":round(cuo*p,2), "Cuota_Mensual":round(cuo,2), "Meses_Totales":p, "Pagos_Realizados":0, "Estado":"ACTIVO"}])
+                # NUEVA FÓRMULA: Interés Simple / Tasa Plana
+                interes_total = m * (t / 100) * (p / 12)
+                deuda_total = m + interes_total
+                cuo = deuda_total / p
+                
+                new = pd.DataFrame([{"ID":str(uuid.uuid4())[:8], "Nombre":n, "Cedula":c, "Email":e, "Monto_Inicial":m, "Saldo_Restante":round(deuda_total,2), "Cuota_Mensual":round(cuo,2), "Meses_Totales":p, "Pagos_Realizados":0, "Estado":"ACTIVO"}])
                 conn.update(worksheet="Prestamos", data=pd.concat([df_p, new], ignore_index=True))
                 st.session_state.show_form_p = False; st.rerun()
 
@@ -282,8 +290,8 @@ if sec == "💰 PRÉSTAMOS":
                     df_p = df_p[df_p["ID"] != row["ID"]]; conn.update(worksheet="Prestamos", data=df_p); st.rerun()
 
 # --- 2. MODO COOPERATIVA ---
-elif sec == "🤝 COOPERATIVA":
-    st.title("🤝 COOPERATIVA")
+elif sec == "🤝 CUOTAS":
+    st.title("🤝 CUOTAS")
     df_s, df_ph = cargar("Cooperativa"), cargar("Pagos_Coop")
     v_x = st.number_input("💵 VALOR CUOTA FIJA:", value=10.0)
     if not df_s.empty: st.download_button("📊 EXCEL GENERAL COOP", data=generar_excel_grupal(df_s, "COOPERATIVA"), file_name="Reporte_SanBlas_Coop.xlsx", use_container_width=True)
