@@ -290,8 +290,8 @@ if sec == "💰 PRÉSTAMOS":
                     df_p = df_p[df_p["ID"] != row["ID"]]; conn.update(worksheet="Prestamos", data=df_p); st.rerun()
 
 # --- 2. MODO COOPERATIVA ---
-elif sec == "🤝 CUOTAS":
-    st.title("🤝 CUOTAS")
+elif sec == "🤝 COOPERATIVA":
+    st.title("🤝 COOPERATIVA")
     df_s, df_ph = cargar("Cooperativa"), cargar("Pagos_Coop")
     v_x = st.number_input("💵 VALOR CUOTA FIJA:", value=10.0)
     if not df_s.empty: st.download_button("📊 EXCEL GENERAL COOP", data=generar_excel_grupal(df_s, "COOPERATIVA"), file_name="Reporte_SanBlas_Coop.xlsx", use_container_width=True)
